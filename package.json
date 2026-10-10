@@ -1,8 +1,11 @@
 {
   "name": "iron-arc-backend",
   "version": "1.0.0",
-  "description": "Backend server for Iron Arc fitness app — Gemini planning engine and Firebase Admin",
+  "description": "Backend server for Iron Arc fitness app — Groq planning engine and Firebase Admin",
   "main": "src/app.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
@@ -13,7 +16,6 @@
     "postinstall": "npx prisma generate"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.21.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "cors": "^2.8.5",
@@ -25,10 +27,10 @@
     "groq-sdk": "^1.3.0",
     "helmet": "^8.2.0",
     "pg": "^8.22.0",
+    "prisma": "^7.8.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0",
-    "prisma": "^7.8.0"
+    "nodemon": "^3.1.0"
   }
 }

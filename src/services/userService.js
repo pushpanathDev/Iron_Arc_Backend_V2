@@ -5,11 +5,11 @@ function normalizeEmail(email) {
   return (email || "").trim().toLowerCase();
 }
 
-async function findOrCreateUser(firebaseUid, email) {
+async function upsertUserByFirebaseUid(firebaseUid, email) {
   const normalizedEmail = normalizeEmail(email);
 
   if (!normalizedEmail) {
-    throw new Error("Email is required to create or locate a user record.");
+    throw new Error("Email is required to sync a user record.");
   }
 
   const existingByUid = await prisma.user.findUnique({
@@ -18,69 +18,23 @@ async function findOrCreateUser(firebaseUid, email) {
 
   if (existingByUid) {
     if (existingByUid.email !== normalizedEmail) {
-      console.log(
-        `[userService] Updated email for existing UID ${firebaseUid} -> ${normalizedEmail}`,
-      );
+      console.log(`[userService] Updated email for existing UID ${firebaseUid}`);
       return prisma.user.update({
         where: { firebaseUid },
         data: { email: normalizedEmail },
       });
     }
 
-    console.log(
-      `[userService] Reused existing profile for UID ${firebaseUid} (${normalizedEmail})`,
-    );
     return existingByUid;
   }
 
-  const existingByEmail = await prisma.user.findUnique({
-    where: { email: normalizedEmail },
-  });
-
-  if (existingByEmail) {
-    if (existingByEmail.firebaseUid !== firebaseUid) {
-      console.log(
-        `[userService] Reclaiming existing profile for ${normalizedEmail} -> ${firebaseUid}`,
-      );
-      return prisma.user.update({
-        where: { email: normalizedEmail },
-        data: {
-          firebaseUid,
-          email: normalizedEmail,
-        },
-      });
-    }
-
-    return existingByEmail;
-  }
-
   try {
-    console.log(
-      `[userService] Creating new profile for ${firebaseUid} (${normalizedEmail})`,
-    );
+    console.log(`[userService] Creating new profile for ${firebaseUid}`);
     return await prisma.user.create({
       data: { firebaseUid, email: normalizedEmail },
     });
   } catch (error) {
     if (error.code === "P2002") {
-      const userByEmail = await prisma.user.findUnique({
-        where: { email: normalizedEmail },
-      });
-
-      if (userByEmail) {
-        if (userByEmail.firebaseUid !== firebaseUid) {
-          return prisma.user.update({
-            where: { email: normalizedEmail },
-            data: {
-              firebaseUid,
-              email: normalizedEmail,
-            },
-          });
-        }
-
-        return userByEmail;
-      }
-
       const userByUid = await prisma.user.findUnique({
         where: { firebaseUid },
       });
@@ -115,24 +69,52 @@ async function updateProfile(firebaseUid, data) {
 
   const filtered = {};
   for (const key of allowed) {
-    if (data[key] !== undefined) {
+    if (data[key] !== undefined && key !== "weight") {
       filtered[key] = data[key];
     }
   }
 
-  console.log("[userService] Updating profile", {
-    firebaseUid,
-    updates: filtered,
-  });
+  const user = await prisma.$transaction(async (tx) => {
+    const existingUser = await tx.user.findUnique({
+      where: { firebaseUid },
+      select: { id: true },
+    });
 
-  const user = await prisma.user.update({
-    where: { firebaseUid },
-    data: filtered,
-  });
+    if (!existingUser) throw new Error("User not found");
 
-  console.log("[userService] Profile updated", {
-    firebaseUid,
-    id: user.id,
+    const latestWeight = await tx.bodyWeight.findFirst({
+      where: { userId: existingUser.id, deletedAt: null },
+      orderBy: { date: "desc" },
+    });
+
+    if (!latestWeight && data.weight !== undefined && data.weight !== null) {
+      const today = new Date(new Date().toISOString().slice(0, 10));
+      await tx.bodyWeight.upsert({
+        where: { userId_date: { userId: existingUser.id, date: today } },
+        update: {
+          weight: data.weight,
+          deletedAt: null,
+        },
+        create: {
+          userId: existingUser.id,
+          date: today,
+          weight: data.weight,
+        },
+      });
+    }
+
+    const currentWeight = await tx.bodyWeight.findFirst({
+      where: { userId: existingUser.id, deletedAt: null },
+      orderBy: { date: "desc" },
+    });
+
+    return tx.user.update({
+      where: { id: existingUser.id },
+      data: {
+        ...filtered,
+        weight: currentWeight?.weight ?? null,
+      },
+    });
   });
 
   return user;
@@ -166,7 +148,7 @@ async function deleteAccount(firebaseUid) {
 }
 
 module.exports = {
-  findOrCreateUser,
+  upsertUserByFirebaseUid,
   getProfile,
   updateProfile,
   deleteAccount,

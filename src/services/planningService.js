@@ -1,13 +1,15 @@
 const { prisma } = require("../config/database");
 const { anonymizeIronArcProfile } = require("../utils/anonymizer");
 const { validateAndSanitizePlan } = require("../utils/planValidator");
+const { EXERCISE_DB, isValidExerciseId, getSubstituteExerciseId } = require("../utils/exerciseDatabase");
 const {
-  callGeminiWithRetry,
+  callGroqWithRetry,
   buildGeneratePlanPrompt,
   buildRecalibratePlanPrompt,
   buildSubstitutePrompt,
   buildPlanChatPrompt,
-} = require("./geminiService");
+} = require("./groqService");
+const { evaluateAchievementsSafely } = require("./achievementService");
 
 /* ─────────────────────────────────────────────────────────────
    Helpers
@@ -43,7 +45,7 @@ async function listPlans(firebaseUid) {
     where: { userId: user.id },
     orderBy: { createdAt: "desc" },
   });
-  return plans;
+  return plans.map(stripPlanData);
 }
 
 async function getPlanById(firebaseUid, planId) {
@@ -63,46 +65,49 @@ async function generatePlan(firebaseUid, criteria = {}) {
   const recentWorkouts = await fetchRecentWorkouts(user.id, 5);
 
   const prompt = buildGeneratePlanPrompt(anonymized, recentWorkouts, criteria);
-  const rawPlan = await callGeminiWithRetry(prompt);
+  const rawPlan = await callGroqWithRetry(prompt);
   const validatedPlan = validateAndSanitizePlan(rawPlan, []);
 
-  // Auto-name based on split preference and count
-  const existingCount = await prisma.plan.count({ where: { userId: user.id } });
-  const splitLabel = criteria.splitPreference
-    ? criteria.splitPreference.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
-    : "My Plan";
-  const planName = existingCount === 0 ? splitLabel : `${splitLabel} ${existingCount + 1}`;
+  const plan = await prisma.$transaction(async (tx) => {
+    const existingCount = await tx.plan.count({ where: { userId: user.id } });
+    const splitLabel = criteria.splitPreference
+      ? criteria.splitPreference.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+      : "My Plan";
+    const planName = existingCount === 0 ? splitLabel : `${splitLabel} ${existingCount + 1}`;
 
-  // Deactivate all existing plans
-  await prisma.plan.updateMany({
-    where: { userId: user.id, isActive: true },
-    data: { isActive: false },
-  });
+    await tx.plan.updateMany({
+      where: { userId: user.id, isActive: true },
+      data: { isActive: false },
+    });
 
-  // Create new Plan record
-  const planRecord = await prisma.plan.create({
-    data: {
-      userId: user.id,
-      name: planName,
-      criteria: criteria,
-      planData: {
-        ...validatedPlan,
-        generatedAt: new Date().toISOString(),
+    return tx.plan.create({
+      data: {
+        userId: user.id,
+        name: planName,
+        criteria,
+        planData: {
+          ...validatedPlan,
+          generatedAt: new Date().toISOString(),
+          weekNumber: 1,
+          status: "active",
+        },
+        isActive: true,
         weekNumber: 1,
-        status: "active",
       },
-      isActive: true,
-      weekNumber: 1,
-    },
+    });
   });
 
-  // Mirror to user.activePlan for profile API backwards-compat
-  await prisma.user.update({
-    where: { firebaseUid },
-    data: { activePlan: planRecord.planData },
-  });
+  // Append-only generation log for the "plans generated" badges (plans can be
+  // deleted). Outside the transaction and best-effort, so a missing
+  // plan_generations table (migration not yet applied) never fails generation.
+  try {
+    await prisma.planGeneration.create({ data: { userId: user.id } });
+  } catch (error) {
+    console.warn(`[planning] Could not record plan generation: ${error.message}`);
+  }
 
-  return planRecord;
+  const newlyUnlocked = await evaluateAchievementsSafely(user.id, "plan");
+  return { plan, newlyUnlocked };
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -124,7 +129,7 @@ async function recalibratePlan(firebaseUid, planId) {
     recentWorkouts,
   );
 
-  const rawPlan = await callGeminiWithRetry(prompt);
+  const rawPlan = await callGroqWithRetry(prompt);
   const validatedPlan = validateAndSanitizePlan(rawPlan, []);
 
   const updatedPlanData = {
@@ -141,14 +146,6 @@ async function recalibratePlan(firebaseUid, planId) {
       weekNumber: (plan.weekNumber || 1) + 1,
     },
   });
-
-  // Mirror to user.activePlan if this is the active plan
-  if (plan.isActive) {
-    await prisma.user.update({
-      where: { firebaseUid },
-      data: { activePlan: updatedPlanData },
-    });
-  }
 
   return updated;
 }
@@ -174,7 +171,8 @@ function applySubstitution(planData, oldExerciseId, substitute) {
       if (
         id === oldExerciseId ||
         ex.name === oldExerciseId ||
-        id.toLowerCase() === oldExerciseId.toLowerCase()
+        (typeof id === "string" && typeof oldExerciseId === "string" &&
+          id.toLowerCase() === oldExerciseId.toLowerCase())
       ) {
         exercises[i] = {
           ...ex,
@@ -212,23 +210,31 @@ async function substituteExercise(firebaseUid, planId, exerciseId, reason) {
 
   const anonymized = anonymizeIronArcProfile(user, user.id);
   const prompt = buildSubstitutePrompt(exerciseId, reason, anonymized);
-  const substitute = await callGeminiWithRetry(prompt);
+  const rawSubstitute = await callGroqWithRetry(prompt);
+  const fallbackExerciseId = getSubstituteExerciseId(exerciseId, []);
+  const substituteExerciseId = isValidExerciseId(rawSubstitute?.substituteExerciseId)
+    ? rawSubstitute.substituteExerciseId
+    : fallbackExerciseId;
+  const substitute = {
+    ...rawSubstitute,
+    substituteExerciseId,
+    substituteName: EXERCISE_DB[substituteExerciseId].name,
+    reason: rawSubstitute?.reason || reason || "Exercise substitution",
+  };
 
   // Apply the substitution to the actual plan data
   const { updatedPlanData, applied } = applySubstitution(plan.planData, exerciseId, substitute);
 
+  if (!applied) {
+    return { plan, substitute, applied: false };
+  }
+
+  const validatedPlanData = validateAndSanitizePlan(updatedPlanData, []);
+
   const updatedPlan = await prisma.plan.update({
     where: { id: planId },
-    data: { planData: updatedPlanData },
+    data: { planData: validatedPlanData },
   });
-
-  // Mirror to user.activePlan if this is the active plan
-  if (plan.isActive) {
-    await prisma.user.update({
-      where: { firebaseUid },
-      data: { activePlan: updatedPlanData },
-    });
-  }
 
   return {
     plan: updatedPlan,
@@ -263,24 +269,17 @@ async function activatePlan(firebaseUid, planId) {
   });
   if (!plan) throw new Error("PLAN_NOT_FOUND");
 
-  // Deactivate all others
-  await prisma.plan.updateMany({
-    where: { userId: user.id, isActive: true },
-    data: { isActive: false },
-  });
+  return prisma.$transaction(async (tx) => {
+    await tx.plan.updateMany({
+      where: { userId: user.id, isActive: true },
+      data: { isActive: false },
+    });
 
-  const activated = await prisma.plan.update({
-    where: { id: planId },
-    data: { isActive: true },
+    return tx.plan.update({
+      where: { id: planId },
+      data: { isActive: true },
+    });
   });
-
-  // Mirror to user.activePlan
-  await prisma.user.update({
-    where: { firebaseUid },
-    data: { activePlan: activated.planData },
-  });
-
-  return activated;
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -293,26 +292,22 @@ async function deletePlan(firebaseUid, planId) {
   });
   if (!plan) throw new Error("PLAN_NOT_FOUND");
 
-  await prisma.plan.delete({ where: { id: planId } });
+  await prisma.$transaction(async (tx) => {
+    await tx.plan.delete({ where: { id: planId } });
 
-  // If it was the active plan, clear user.activePlan
-  if (plan.isActive) {
-    // Try to activate the most recently created remaining plan
-    const next = await prisma.plan.findFirst({
-      where: { userId: user.id },
-      orderBy: { createdAt: "desc" },
-    });
-    await prisma.user.update({
-      where: { firebaseUid },
-      data: { activePlan: next ? next.planData : null },
-    });
-    if (next) {
-      await prisma.plan.update({
-        where: { id: next.id },
-        data: { isActive: true },
+    if (plan.isActive) {
+      const next = await tx.plan.findFirst({
+        where: { userId: user.id },
+        orderBy: { createdAt: "desc" },
       });
+      if (next) {
+        await tx.plan.update({
+          where: { id: next.id },
+          data: { isActive: true },
+        });
+      }
     }
-  }
+  });
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -336,7 +331,7 @@ async function chatWithPlan(firebaseUid, planId, userMessage) {
   // Build prompt from plan data without the internal _chatHistory key
   const { _chatHistory: _omit, ...planDataForPrompt } = existingPlanData;
   const prompt = buildPlanChatPrompt(planDataForPrompt, history, userMessage, anonymized);
-  const response = await callGeminiWithRetry(prompt);
+  const response = await callGroqWithRetry(prompt);
 
   const aiMessage = response?.message ?? "I've processed your request.";
   const modifiedPlan = response?.modifiedPlan ?? null;
@@ -350,8 +345,9 @@ async function chatWithPlan(firebaseUid, planId, userMessage) {
 
   // Merge: use AI-modified plan structure if provided, then embed history
   const basePlanData = modifiedPlan ?? existingPlanData;
+  const validatedPlanData = validateAndSanitizePlan(basePlanData, []);
   const updatedPlanData = {
-    ...basePlanData,
+    ...validatedPlanData,
     _chatHistory: newHistory,
   };
 
@@ -359,14 +355,6 @@ async function chatWithPlan(firebaseUid, planId, userMessage) {
     where: { id: planId },
     data: { planData: updatedPlanData },
   });
-
-  // Mirror to user.activePlan if this is the active plan
-  if (plan.isActive && modifiedPlan) {
-    await prisma.user.update({
-      where: { firebaseUid },
-      data: { activePlan: updatedPlanData },
-    });
-  }
 
   return {
     message: aiMessage,

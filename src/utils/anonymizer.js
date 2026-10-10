@@ -1,7 +1,7 @@
 /**
- * PRIVACY — strips all PII from Iron Arc user profile before sending to Gemini.
+ * PRIVACY — strips all PII from Iron Arc user profile before sending to Groq.
  *
- * Fields that exist in Iron Arc's profile document that must NEVER reach Gemini:
+ * Fields that exist in Iron Arc's profile document that must NEVER reach Groq:
  * - email (direct PII)
  * - displayName (direct PII)
  * - userId (linkable to real identity)

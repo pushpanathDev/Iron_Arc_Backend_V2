@@ -2,21 +2,15 @@ const express = require("express");
 const router = express.Router();
 const { verifyFirebaseToken, requireEmailVerified } = require("../middleware/authMiddleware");
 const { validate, customExerciseSchema } = require("../middleware/validation");
-const userService = require("../services/userService");
 const customExerciseService = require("../services/customExerciseService");
 
 router.use(verifyFirebaseToken);
 
-async function ensureUser(req) {
-  const user = await userService.findOrCreateUser(req.user.uid, req.user.email);
-  return user.id;
-}
-
 router.post("/", requireEmailVerified, validate(customExerciseSchema), async (req, res, next) => {
   try {
-    const userId = await ensureUser(req);
-    const exercise = await customExerciseService.createExercise(userId, req.body);
-    res.status(201).json({ success: true, data: exercise });
+    const userId = req.user.dbUser.id;
+    const { exercise, newlyUnlocked } = await customExerciseService.createExercise(userId, req.body);
+    res.status(201).json({ success: true, data: exercise, newlyUnlocked });
   } catch (error) {
     if (error.code === "P2002") {
       return res.status(409).json({
@@ -30,7 +24,7 @@ router.post("/", requireEmailVerified, validate(customExerciseSchema), async (re
 
 router.get("/", async (req, res, next) => {
   try {
-    const userId = await ensureUser(req);
+    const userId = req.user.dbUser.id;
     const { category } = req.query;
     const exercises = await customExerciseService.getExercises(userId, category);
     res.json({ success: true, data: exercises });
@@ -41,7 +35,7 @@ router.get("/", async (req, res, next) => {
 
 router.delete("/:id", requireEmailVerified, async (req, res, next) => {
   try {
-    const userId = await ensureUser(req);
+    const userId = req.user.dbUser.id;
     const exercise = await customExerciseService.deleteExercise(userId, req.params.id);
 
     if (!exercise) {

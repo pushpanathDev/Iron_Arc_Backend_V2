@@ -1,25 +1,37 @@
 const { prisma } = require("../config/database");
+const { evaluateAchievementsSafely } = require("./achievementService");
+const {
+  computeWorkoutMetrics,
+  computePersonalRecords,
+  muscleGroupsCovered,
+} = require("../utils/achievementEvaluator");
 
 async function createWorkout(userId, data) {
-  const workout = await prisma.workout.create({
-    data: {
-      userId,
-      date: new Date(data.date),
-      exercise: data.exercise,
-      category: data.category,
-      notes: data.notes || null,
-      sets: {
-        create: (data.sets || []).map((set, idx) => ({
-          setNumber: idx + 1,
-          reps: set.reps,
-          weight: set.weight || 0,
-        })),
+  // Workout + sets are written atomically.
+  const workout = await prisma.$transaction((tx) =>
+    tx.workout.create({
+      data: {
+        userId,
+        date: new Date(data.date),
+        exercise: data.exercise,
+        category: data.category,
+        notes: data.notes || null,
+        sets: {
+          create: (data.sets || []).map((set, idx) => ({
+            setNumber: idx + 1,
+            reps: set.reps,
+            weight: set.weight || 0,
+          })),
+        },
       },
-    },
-    include: { sets: true },
-  });
+      include: { sets: true },
+    }),
+  );
 
-  return workout;
+  // After commit and best-effort: an evaluation failure is logged and never
+  // turns this successful save into an error response.
+  const newlyUnlocked = await evaluateAchievementsSafely(userId, "workout");
+  return { workout, newlyUnlocked };
 }
 
 async function getWorkouts(userId, { page = 1, limit = 20, category, startDate, endDate } = {}) {
@@ -59,12 +71,6 @@ async function getWorkoutById(userId, workoutId) {
 }
 
 async function updateWorkout(userId, workoutId, data) {
-  const existing = await prisma.workout.findFirst({
-    where: { id: workoutId, userId, deletedAt: null },
-  });
-
-  if (!existing) return null;
-
   const updateData = {};
   if (data.date) updateData.date = new Date(data.date);
   if (data.exercise) updateData.exercise = data.exercise;
@@ -72,7 +78,6 @@ async function updateWorkout(userId, workoutId, data) {
   if (data.notes !== undefined) updateData.notes = data.notes || null;
 
   if (data.sets) {
-    await prisma.workoutSet.deleteMany({ where: { workoutId } });
     updateData.sets = {
       create: data.sets.map((set, idx) => ({
         setNumber: idx + 1,
@@ -82,13 +87,31 @@ async function updateWorkout(userId, workoutId, data) {
     };
   }
 
-  const workout = await prisma.workout.update({
-    where: { id: workoutId },
-    data: updateData,
-    include: { sets: { orderBy: { setNumber: "asc" } } },
+  // Ownership check, set replacement and update in one transaction: if any
+  // step fails, nothing is written and the old sets are kept.
+  const workout = await prisma.$transaction(async (tx) => {
+    const existing = await tx.workout.findFirst({
+      where: { id: workoutId, userId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!existing) return null;
+
+    if (data.sets) {
+      await tx.workoutSet.deleteMany({ where: { workoutId } });
+    }
+
+    return tx.workout.update({
+      where: { id: workoutId },
+      data: updateData,
+      include: { sets: { orderBy: { setNumber: "asc" } } },
+    });
   });
 
-  return workout;
+  if (!workout) return null;
+
+  // After commit and best-effort (see createWorkout).
+  const newlyUnlocked = await evaluateAchievementsSafely(userId, "workout");
+  return { workout, newlyUnlocked };
 }
 
 async function deleteWorkout(userId, workoutId) {
@@ -103,7 +126,42 @@ async function deleteWorkout(userId, workoutId) {
     data: { deletedAt: new Date() },
   });
 
-  return workout;
+  // Deletes are a trigger too. Evaluation is append-only, so a delete can
+  // never revoke a badge that was already earned.
+  const newlyUnlocked = await evaluateAchievementsSafely(userId, "workout");
+  return { workout, newlyUnlocked };
+}
+
+/**
+ * Aggregate stats over the user's full (non-deleted) history, so the app
+ * does not need every row to show streaks, PRs and totals. Streaks use the
+ * same rules as achievements (distinct calendar dates; alive if the latest
+ * is today or yesterday; any gap breaks it).
+ */
+async function getWorkoutStats(userId) {
+  const workouts = await prisma.workout.findMany({
+    where: { userId, deletedAt: null },
+    select: {
+      date: true,
+      createdAt: true,
+      exercise: true,
+      category: true,
+      sets: { select: { reps: true, weight: true } },
+    },
+  });
+
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const metrics = computeWorkoutMetrics(workouts, todayKey);
+
+  return {
+    totalWorkouts: metrics.workoutDays, // distinct workout dates
+    currentStreak: metrics.currentStreak,
+    longestStreak: metrics.longestStreak,
+    totalVolume: metrics.totalVolume, // kg
+    personalRecords: computePersonalRecords(workouts),
+    distinctExercises: metrics.distinctExercises,
+    muscleGroupsCovered: muscleGroupsCovered(workouts),
+  };
 }
 
 async function getRecentWorkouts(userId, days = 14) {
@@ -127,5 +185,6 @@ module.exports = {
   getWorkoutById,
   updateWorkout,
   deleteWorkout,
+  getWorkoutStats,
   getRecentWorkouts,
 };

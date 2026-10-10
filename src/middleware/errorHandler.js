@@ -23,10 +23,10 @@ function errorHandler(err, req, res, next) {
     });
   }
 
-  // Gemini / AI errors
+  // Groq / AI errors
   if (
-    err.message?.includes("GoogleGenerativeAI") ||
-    err.message?.includes("GEMINI")
+    err.message?.includes("Groq") ||
+    err.message?.includes("GROQ")
   ) {
     return res.status(503).json({
       success: false,

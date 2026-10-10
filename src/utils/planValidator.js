@@ -1,7 +1,7 @@
 const { isValidExerciseId, getSubstituteExerciseId } = require('./exerciseDatabase');
 
 /**
- * Validates and sanitizes the JSON plan returned by Gemini before
+ * Validates and sanitizes the JSON plan returned by Groq before
  * it is saved to Firestore or returned to the Iron Arc React Native app.
  *
  * Edge Cases:

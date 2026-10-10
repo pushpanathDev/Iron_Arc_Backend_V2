@@ -1,21 +1,30 @@
 const express = require("express");
 const router = express.Router();
-const { verifyFirebaseToken, requireEmailVerified } = require("../middleware/authMiddleware");
+const {
+  verifyFirebaseToken,
+  verifyFirebaseTokenWithRevocation,
+  requireEmailVerified,
+  requireRecentSignIn,
+} = require("../middleware/authMiddleware");
 const { auth } = require("../config/firebase");
 const { validate, profileUpdateSchema } = require("../middleware/validation");
 const userService = require("../services/userService");
 
 router.use(verifyFirebaseToken);
 
+router.post("/sync", requireEmailVerified, async (req, res, next) => {
+  try {
+    const user = await userService.upsertUserByFirebaseUid(req.user.uid, req.user.email);
+    req.user.dbUser = user;
+    res.json({ success: true, data: user });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/profile", async (req, res, next) => {
   try {
-    let user = await userService.getProfile(req.user.uid);
-
-    if (!user) {
-      user = await userService.findOrCreateUser(req.user.uid, req.user.email);
-    }
-
-    res.json({ success: true, data: user });
+    res.json({ success: true, data: req.user.dbUser });
   } catch (error) {
     next(error);
   }
@@ -23,12 +32,6 @@ router.get("/profile", async (req, res, next) => {
 
 router.patch("/profile", requireEmailVerified, validate(profileUpdateSchema), async (req, res, next) => {
   try {
-    let user = await userService.getProfile(req.user.uid);
-
-    if (!user) {
-      user = await userService.findOrCreateUser(req.user.uid, req.user.email);
-    }
-
     const updated = await userService.updateProfile(req.user.uid, req.body);
     res.json({ success: true, data: updated });
   } catch (error) {
@@ -36,7 +39,7 @@ router.patch("/profile", requireEmailVerified, validate(profileUpdateSchema), as
   }
 });
 
-router.delete("/account", requireEmailVerified, async (req, res, next) => {
+router.delete(["/me", "/account"], verifyFirebaseTokenWithRevocation, requireRecentSignIn, requireEmailVerified, async (req, res, next) => {
   try {
     console.log(`[user] Account deletion requested for ${req.user.uid}`);
     await userService.deleteAccount(req.user.uid);
@@ -47,7 +50,7 @@ router.delete("/account", requireEmailVerified, async (req, res, next) => {
   }
 });
 
-router.post("/logout", async (req, res, next) => {
+router.post("/logout", requireEmailVerified, async (req, res, next) => {
   try {
     console.log(`[user] Logout requested for ${req.user.uid}`);
     await auth.revokeRefreshTokens(req.user.uid);

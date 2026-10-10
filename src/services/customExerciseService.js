@@ -1,4 +1,5 @@
 const { prisma } = require("../config/database");
+const { evaluateAchievementsSafely } = require("./achievementService");
 
 async function createExercise(userId, data) {
   const exercise = await prisma.customExercise.create({
@@ -9,7 +10,8 @@ async function createExercise(userId, data) {
     },
   });
 
-  return exercise;
+  const newlyUnlocked = await evaluateAchievementsSafely(userId, "custom_exercise");
+  return { exercise, newlyUnlocked };
 }
 
 async function getExercises(userId, category) {

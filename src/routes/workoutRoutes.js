@@ -2,21 +2,17 @@ const express = require("express");
 const router = express.Router();
 const { verifyFirebaseToken, requireEmailVerified } = require("../middleware/authMiddleware");
 const { validate, workoutSchema, workoutUpdateSchema } = require("../middleware/validation");
-const userService = require("../services/userService");
 const workoutService = require("../services/workoutService");
+
+const MAX_PAGE_SIZE = 1000;
 
 router.use(verifyFirebaseToken);
 
-async function ensureUser(req) {
-  const user = await userService.findOrCreateUser(req.user.uid, req.user.email);
-  return user.id;
-}
-
 router.post("/", requireEmailVerified, validate(workoutSchema), async (req, res, next) => {
   try {
-    const userId = await ensureUser(req);
-    const workout = await workoutService.createWorkout(userId, req.body);
-    res.status(201).json({ success: true, data: workout });
+    const userId = req.user.dbUser.id;
+    const { workout, newlyUnlocked } = await workoutService.createWorkout(userId, req.body);
+    res.status(201).json({ success: true, data: workout, newlyUnlocked });
   } catch (error) {
     next(error);
   }
@@ -24,12 +20,13 @@ router.post("/", requireEmailVerified, validate(workoutSchema), async (req, res,
 
 router.get("/", async (req, res, next) => {
   try {
-    const userId = await ensureUser(req);
+    const userId = req.user.dbUser.id;
     const { page, limit, category, startDate, endDate } = req.query;
 
     const result = await workoutService.getWorkouts(userId, {
-      page: parseInt(page) || 1,
-      limit: Math.min(parseInt(limit) || 20, 100),
+      page: Math.max(parseInt(page) || 1, 1),
+      // Hard cap 1000 rows per page; clients page through totalPages for more.
+      limit: Math.min(Math.max(parseInt(limit) || 20, 1), MAX_PAGE_SIZE),
       category,
       startDate,
       endDate,
@@ -41,9 +38,20 @@ router.get("/", async (req, res, next) => {
   }
 });
 
+// GET /api/workouts/stats — aggregates over the user's full history.
+// Must be registered before "/:id" so "stats" is not treated as an id.
+router.get("/stats", async (req, res, next) => {
+  try {
+    const stats = await workoutService.getWorkoutStats(req.user.dbUser.id);
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/:id", async (req, res, next) => {
   try {
-    const userId = await ensureUser(req);
+    const userId = req.user.dbUser.id;
     const workout = await workoutService.getWorkoutById(userId, req.params.id);
 
     if (!workout) {
@@ -58,14 +66,14 @@ router.get("/:id", async (req, res, next) => {
 
 router.patch("/:id", requireEmailVerified, validate(workoutUpdateSchema), async (req, res, next) => {
   try {
-    const userId = await ensureUser(req);
-    const workout = await workoutService.updateWorkout(userId, req.params.id, req.body);
+    const userId = req.user.dbUser.id;
+    const result = await workoutService.updateWorkout(userId, req.params.id, req.body);
 
-    if (!workout) {
+    if (!result) {
       return res.status(404).json({ success: false, message: "Workout not found" });
     }
 
-    res.json({ success: true, data: workout });
+    res.json({ success: true, data: result.workout, newlyUnlocked: result.newlyUnlocked });
   } catch (error) {
     next(error);
   }
@@ -73,14 +81,14 @@ router.patch("/:id", requireEmailVerified, validate(workoutUpdateSchema), async 
 
 router.delete("/:id", requireEmailVerified, async (req, res, next) => {
   try {
-    const userId = await ensureUser(req);
-    const workout = await workoutService.deleteWorkout(userId, req.params.id);
+    const userId = req.user.dbUser.id;
+    const result = await workoutService.deleteWorkout(userId, req.params.id);
 
-    if (!workout) {
+    if (!result) {
       return res.status(404).json({ success: false, message: "Workout not found" });
     }
 
-    res.json({ success: true, message: "Workout deleted" });
+    res.json({ success: true, message: "Workout deleted", newlyUnlocked: result.newlyUnlocked });
   } catch (error) {
     next(error);
   }

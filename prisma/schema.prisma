@@ -18,7 +18,6 @@ model User {
   age           Int?
   fitnessGoal   String?  @map("fitness_goal")
   weeklyGoal    Int      @default(4) @map("weekly_goal")
-  activePlan    Json?    @map("active_plan")
   isAdmin       Boolean  @default(false) @map("is_admin")
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at")
@@ -29,8 +28,22 @@ model User {
   achievements    Achievement[]
   customExercises CustomExercise[]
   plans           Plan[]
+  planGenerations PlanGeneration[]
 
   @@map("users")
+}
+
+// Append-only log of AI plan generations (plans themselves can be deleted).
+// Drives the "plans generated" achievements.
+model PlanGeneration {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("plan_generations")
 }
 
 model Plan {

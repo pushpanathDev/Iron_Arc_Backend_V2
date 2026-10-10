@@ -68,10 +68,10 @@ function validate(schema) {
         field: i.path.join("."),
         message: i.message,
       }));
+      // Never log req.body: it carries personal data (weight, age, notes).
       console.warn("[validation] Rejected request", {
         path: req.path,
         method: req.method,
-        body: req.body,
         errors,
       });
       return res.status(400).json({

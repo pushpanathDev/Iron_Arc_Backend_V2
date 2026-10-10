@@ -1,11 +1,10 @@
 /**
  * AI Service — powered by Groq (Llama 3.3 70B)
  *
- * Previously used Gemini 1.5-flash (deprecated) → 2.0-flash (quota=0).
  * Groq provides a generous free tier (1,000+ RPD) with Llama 3.3 70B,
  * which is excellent at structured JSON generation for workout plans.
  *
- * Exported function names are unchanged so planningService.js needs no edits.
+ * Exported functions are consumed by planningService.js.
  */
 const { groqClient, GROQ_MODEL } = require('../config/groq');
 
@@ -22,17 +21,18 @@ function extractRetryDelaySecs(error) {
   const retryAfter = error?.headers?.['retry-after'];
   if (retryAfter) return parseFloat(retryAfter);
 
-  // Fallback: scan message for Gemini-style retryDelay JSON
+  // Fallback: scan message for retryDelay JSON
   const match = (error?.message || '').match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
   if (match) return parseFloat(match[1]);
 
   return null;
 }
 
-async function callGeminiWithRetry(prompt, maxRetries = 3) {
+async function callGroqWithRetry(prompt, maxRetries = 2) {
   let lastError;
+  const maxAttempts = maxRetries + 1;
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const completion = await groqClient.chat.completions.create({
         model: GROQ_MODEL,
@@ -62,9 +62,9 @@ async function callGeminiWithRetry(prompt, maxRetries = 3) {
       lastError = error;
       const is429 = error?.status === 429 || (error?.message || '').includes('429');
 
-      console.warn(`[AI] Attempt ${attempt}/${maxRetries} failed: ${error.message}`);
+      console.warn(`[AI] Attempt ${attempt}/${maxAttempts} failed: ${error.message}`);
 
-      if (attempt < maxRetries) {
+      if (attempt < maxAttempts) {
         if (is429) {
           const serverDelaySecs = extractRetryDelaySecs(error) ?? 30;
           const waitMs = Math.min(serverDelaySecs * 1000, 60_000);
@@ -78,11 +78,11 @@ async function callGeminiWithRetry(prompt, maxRetries = 3) {
     }
   }
 
-  throw new Error(`AI plan generation failed after ${maxRetries} attempts: ${lastError?.message}`);
+  throw new Error(`AI plan generation failed after ${maxAttempts} attempts: ${lastError?.message}`);
 }
 
 /* ─────────────────────────────────────────────────────────────
-   Prompt builders (unchanged from Gemini version)
+  Prompt builders
 ───────────────────────────────────────────────────────────── */
 
 function buildGeneratePlanPrompt(anonymizedProfile, recentWorkouts = [], criteria = {}) {
@@ -389,7 +389,7 @@ RETURN ONLY VALID JSON — no markdown, no code fences:
 }
 
 module.exports = {
-  callGeminiWithRetry,
+  callGroqWithRetry,
   buildGeneratePlanPrompt,
   buildRecalibratePlanPrompt,
   buildSubstitutePrompt,

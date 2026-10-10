@@ -1,13 +1,13 @@
 # 🏋️ Iron Arc Backend
 
-Backend server for the **Iron Arc** fitness app — Gemini AI planning engine and Firebase Admin operations.
+Backend server for the **Iron Arc** fitness app — Groq AI planning engine and Firebase Admin operations.
 
 ## What This Server Does
 
 | Job | Description |
 |-----|-------------|
-| **Gemini API Proxy** | Secures the Gemini API key — React Native app cannot hold it safely |
-| **AI Planning Engine** | Generates and recalibrates personalised fitness plans using Gemini 1.5 Flash |
+| **Groq API Proxy** | Secures the Groq API key — React Native app cannot hold it safely |
+| **AI Planning Engine** | Generates and recalibrates personalised fitness plans using Groq |
 | **Firebase Admin Ops** | Admin user deletion, user management (Firebase Admin SDK is server-only) |
 
 ---
@@ -16,7 +16,7 @@ Backend server for the **Iron Arc** fitness app — Gemini AI planning engine an
 
 - **Runtime:** Node.js 18+
 - **Framework:** Express.js
-- **AI:** Google Gemini 1.5 Flash (free tier) via `@google/generative-ai`
+- **AI:** Groq via `groq-sdk`
 - **Auth:** Firebase Admin SDK (server-side JWT verification)
 - **Database:** Cloud Firestore via Firebase Admin SDK
 - **Deployment:** Render.com (free tier)
@@ -44,7 +44,9 @@ Edit `.env` with your actual values:
 
 | Variable | Where to Get It |
 |----------|----------------|
-| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/app/apikey) |
+| `DATABASE_URL` | Supabase connection pooling URL |
+| `DIRECT_URL` | Supabase direct connection URL for Prisma migrations |
+| `GROQ_API_KEY` | [Groq Console](https://console.groq.com/keys) |
 | `FIREBASE_PROJECT_ID` | Firebase Console → Project Settings → General |
 | `FIREBASE_CLIENT_EMAIL` | Firebase Console → Project Settings → Service Accounts |
 | `FIREBASE_PRIVATE_KEY` | Firebase Console → Project Settings → Service Accounts → Generate New Private Key (copy the `private_key` field from the downloaded JSON) |
@@ -188,10 +190,10 @@ Update the `BASE_URL` in that file once your Render deployment is live.
 
 | # | Edge Case | How It's Handled |
 |---|-----------|-----------------|
-| EC-01 | Gemini returns fenced JSON | Stripped with regex |
-| EC-02 | Gemini returns malformed JSON | Retry up to 3× with backoff |
-| EC-03 | Gemini hallucinates exercise IDs | Substituted from server DB |
-| EC-04 | Gemini API rate limit | Exponential backoff |
+| EC-01 | Groq returns fenced JSON | Stripped with regex |
+| EC-02 | Groq returns malformed JSON | Retry up to 3× with backoff |
+| EC-03 | Groq hallucinates exercise IDs | Substituted from server DB |
+| EC-04 | Groq API rate limit | Exponential backoff |
 | EC-05 | Firebase private key newlines | `replace(/\\n/g, '\n')` |
 | EC-06 | Nodemon re-init Firebase | `admin.apps.length` guard |
 | EC-07 | Wrong profile path | Explicit subcollection path |
@@ -205,7 +207,7 @@ Update the `BASE_URL` in that file once your Render deployment is live.
 | EC-15 | Oversized payload | 50kb body limit |
 | EC-16 | Render free tier sleep | UptimeRobot ping |
 | EC-17 | No active plan on recalibrate | 404 with clear message |
-| EC-18 | PII sent to Gemini | Anonymizer strips all PII |
+| EC-18 | PII sent to Groq | Anonymizer strips all PII |
 
 ---
 
@@ -216,7 +218,7 @@ iron-arc-backend/
 ├── src/
 │   ├── config/
 │   │   ├── firebase.js           ← Firebase Admin SDK init
-│   │   └── gemini.js             ← Gemini client init
+│   │   └── groq.js               ← Groq client init
 │   ├── middleware/
 │   │   ├── authMiddleware.js     ← Firebase JWT verification
 │   │   ├── adminMiddleware.js    ← Admin secret key check
@@ -228,12 +230,12 @@ iron-arc-backend/
 │   │   └── healthRoutes.js       ← UptimeRobot keep-alive endpoint
 │   ├── services/
 │   │   ├── planningService.js    ← Planning engine orchestration
-│   │   ├── geminiService.js      ← Gemini prompt builders + retry logic
+│   │   ├── groqService.js        ← Groq prompt builders + retry logic
 │   │   └── adminService.js       ← Firebase Admin delete + list
 │   ├── utils/
 │   │   ├── exerciseDatabase.js   ← Server-side exercise list + validation
-│   │   ├── planValidator.js      ← Validates + sanitizes Gemini JSON output
-│   │   └── anonymizer.js         ← Strips PII before sending to Gemini
+│   │   ├── planValidator.js      ← Validates + sanitizes Groq JSON output
+│   │   └── anonymizer.js         ← Strips PII before sending to Groq
 │   └── app.js                    ← Express app entry point
 ├── services/
 │   └── backendApi.js             ← React Native app integration file

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { verifyFirebaseToken } = require('../middleware/authMiddleware');
+const { verifyFirebaseToken, requireEmailVerified } = require('../middleware/authMiddleware');
 const { generalLimiter, planGenerationLimiter } = require('../middleware/rateLimiter');
 const { validate, substituteSchema } = require('../middleware/validation');
 const {
@@ -30,14 +30,13 @@ router.get('/', verifyFirebaseToken, async (req, res, next) => {
 });
 
 /* ── POST /api/plans/generate ───────────────────────────────────────────
-   Generate a new AI plan — saved to plans table and set as active
-   Also mirrors to user.activePlan for backwards-compat with profile API
+  Generate a new AI plan — saved to plans table and set as active
 ────────────────────────────────────────────────────────────────────────── */
-router.post('/generate', verifyFirebaseToken, planGenerationLimiter, async (req, res, next) => {
+router.post('/generate', verifyFirebaseToken, requireEmailVerified, planGenerationLimiter, async (req, res, next) => {
   try {
     const criteria = req.body?.criteria ?? {};
-    const plan = await generatePlan(req.user.uid, criteria);
-    res.status(201).json({ success: true, data: plan });
+    const { plan, newlyUnlocked } = await generatePlan(req.user.uid, criteria);
+    res.status(201).json({ success: true, data: plan, newlyUnlocked });
   } catch (error) {
     if (error.message === 'PROFILE_NOT_FOUND') {
       return res.status(404).json({ success: false, message: 'User profile not found.' });
@@ -50,7 +49,7 @@ router.post('/generate', verifyFirebaseToken, planGenerationLimiter, async (req,
 });
 
 /* ── POST /api/plans/recalibrate (legacy — recalibrates the active plan) */
-router.post('/recalibrate', verifyFirebaseToken, planGenerationLimiter, async (req, res, next) => {
+router.post('/recalibrate', verifyFirebaseToken, requireEmailVerified, planGenerationLimiter, async (req, res, next) => {
   try {
     const plans = await listPlans(req.user.uid);
     const active = plans.find((p) => p.isActive) ?? plans[0];
@@ -65,7 +64,7 @@ router.post('/recalibrate', verifyFirebaseToken, planGenerationLimiter, async (r
 });
 
 /* ── POST /api/plans/substitute (legacy — substitutes in the active plan) */
-router.post('/substitute', verifyFirebaseToken, validate(substituteSchema), async (req, res, next) => {
+router.post('/substitute', verifyFirebaseToken, requireEmailVerified, validate(substituteSchema), async (req, res, next) => {
   try {
     const { exerciseId, reason } = req.body;
     const plans = await listPlans(req.user.uid);
@@ -98,7 +97,7 @@ router.get('/:id', verifyFirebaseToken, async (req, res, next) => {
 /* ── POST /api/plans/:id/recalibrate ────────────────────────────────────
    Recalibrate a specific plan
 ────────────────────────────────────────────────────────────────────────── */
-router.post('/:id/recalibrate', verifyFirebaseToken, planGenerationLimiter, async (req, res, next) => {
+router.post('/:id/recalibrate', verifyFirebaseToken, requireEmailVerified, planGenerationLimiter, async (req, res, next) => {
   try {
     const plan = await recalibratePlan(req.user.uid, req.params.id);
     res.status(200).json({ success: true, data: plan });
@@ -113,7 +112,7 @@ router.post('/:id/recalibrate', verifyFirebaseToken, planGenerationLimiter, asyn
 /* ── POST /api/plans/:id/substitute ─────────────────────────────────────
    Substitute an exercise within a specific plan
 ────────────────────────────────────────────────────────────────────────── */
-router.post('/:id/substitute', verifyFirebaseToken, validate(substituteSchema), async (req, res, next) => {
+router.post('/:id/substitute', verifyFirebaseToken, requireEmailVerified, validate(substituteSchema), async (req, res, next) => {
   try {
     const { exerciseId, reason } = req.body;
     const result = await substituteExercise(req.user.uid, req.params.id, exerciseId, reason);
@@ -136,7 +135,7 @@ router.post('/:id/substitute', verifyFirebaseToken, validate(substituteSchema), 
 /* ── PATCH /api/plans/:id/name ──────────────────────────────────────────
    Rename a plan
 ────────────────────────────────────────────────────────────────────────── */
-router.patch('/:id/name', verifyFirebaseToken, async (req, res, next) => {
+router.patch('/:id/name', verifyFirebaseToken, requireEmailVerified, async (req, res, next) => {
   try {
     const { name } = req.body;
     if (!name || typeof name !== 'string' || !name.trim()) {
@@ -155,7 +154,7 @@ router.patch('/:id/name', verifyFirebaseToken, async (req, res, next) => {
 /* ── PATCH /api/plans/:id/activate ─────────────────────────────────────
    Set a plan as active (deactivates all others for this user)
 ────────────────────────────────────────────────────────────────────────── */
-router.patch('/:id/activate', verifyFirebaseToken, async (req, res, next) => {
+router.patch('/:id/activate', verifyFirebaseToken, requireEmailVerified, async (req, res, next) => {
   try {
     const plan = await activatePlan(req.user.uid, req.params.id);
     res.status(200).json({ success: true, data: plan });
@@ -170,7 +169,7 @@ router.patch('/:id/activate', verifyFirebaseToken, async (req, res, next) => {
 /* ── DELETE /api/plans/:id ──────────────────────────────────────────────
    Delete a plan (cannot delete the only plan if it's active)
 ────────────────────────────────────────────────────────────────────────── */
-router.delete('/:id', verifyFirebaseToken, async (req, res, next) => {
+router.delete('/:id', verifyFirebaseToken, requireEmailVerified, async (req, res, next) => {
   try {
     await deletePlan(req.user.uid, req.params.id);
     res.status(200).json({ success: true, message: 'Plan deleted.' });
@@ -185,7 +184,7 @@ router.delete('/:id', verifyFirebaseToken, async (req, res, next) => {
 /* ── POST /api/plans/:id/chat ───────────────────────────────────────────
    Send a chat message to customise a plan via AI
 ────────────────────────────────────────────────────────────────────────── */
-router.post('/:id/chat', verifyFirebaseToken, planGenerationLimiter, async (req, res, next) => {
+router.post('/:id/chat', verifyFirebaseToken, requireEmailVerified, planGenerationLimiter, async (req, res, next) => {
   try {
     const { message } = req.body;
     if (!message || typeof message !== 'string' || message.trim().length === 0) {

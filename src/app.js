@@ -1,8 +1,13 @@
 require("dotenv").config();
+const { validateRequiredEnv } = require("./config/env");
+
+validateRequiredEnv();
+
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const { errorHandler } = require("./middleware/errorHandler");
+const { adminLimiter } = require("./middleware/rateLimiter");
 
 const healthRoutes = require("./routes/healthRoutes");
 const planRoutes = require("./routes/planRoutes");
@@ -14,6 +19,9 @@ const customExerciseRoutes = require("./routes/customExerciseRoutes");
 const achievementRoutes = require("./routes/achievementRoutes");
 
 const app = express();
+
+// Render terminates TLS at one proxy hop; trust it so req.ip is the client IP.
+app.set("trust proxy", 1);
 
 // ── Security Headers ───────────────────────────────────────────────────
 app.use(helmet());
@@ -46,7 +54,7 @@ app.use("/api/exercises", customExerciseRoutes);
 app.use("/api/achievements", achievementRoutes);
 app.use("/api/plan", planRoutes);   // legacy — kept for old clients
 app.use("/api/plans", planRoutes);  // new multi-plan API
-app.use("/api/admin", adminRoutes);
+app.use("/api/admin", adminLimiter, adminRoutes);
 
 // ── 404 Catch-All ──────────────────────────────────────────────────────
 app.use((req, res) => {
