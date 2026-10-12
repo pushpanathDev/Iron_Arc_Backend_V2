@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { verifyFirebaseToken, requireEmailVerified } = require("../middleware/authMiddleware");
-const { validate, workoutSchema, workoutUpdateSchema } = require("../middleware/validation");
+const { validate, workoutSchema, workoutBatchSchema, workoutUpdateSchema } = require("../middleware/validation");
 const workoutService = require("../services/workoutService");
 
 const MAX_PAGE_SIZE = 1000;
@@ -13,6 +13,18 @@ router.post("/", requireEmailVerified, validate(workoutSchema), async (req, res,
     const userId = req.user.dbUser.id;
     const { workout, newlyUnlocked } = await workoutService.createWorkout(userId, req.body);
     res.status(201).json({ success: true, data: workout, newlyUnlocked });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/workouts/batch — a whole session in one transaction (all or nothing).
+// Body: { date, entries: [{ exercise, category, notes?, sets }] }.
+router.post("/batch", requireEmailVerified, validate(workoutBatchSchema), async (req, res, next) => {
+  try {
+    const userId = req.user.dbUser.id;
+    const { workouts, newlyUnlocked } = await workoutService.createWorkoutBatch(userId, req.body);
+    res.status(201).json({ success: true, data: workouts, newlyUnlocked });
   } catch (error) {
     next(error);
   }

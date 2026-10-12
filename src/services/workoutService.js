@@ -34,6 +34,43 @@ async function createWorkout(userId, data) {
   return { workout, newlyUnlocked };
 }
 
+/**
+ * Several workouts (one logged session) in ONE transaction: every entry is
+ * saved or none is. Entries are created in order; returns the created
+ * records (with sets) in the same order. Achievements are evaluated once,
+ * after commit, best-effort (see createWorkout).
+ */
+async function createWorkoutBatch(userId, { date, entries }) {
+  const workouts = await prisma.$transaction(async (tx) => {
+    const created = [];
+    for (const entry of entries) {
+      created.push(
+        await tx.workout.create({
+          data: {
+            userId,
+            date: new Date(date),
+            exercise: entry.exercise,
+            category: entry.category,
+            notes: entry.notes || null,
+            sets: {
+              create: (entry.sets || []).map((set, idx) => ({
+                setNumber: idx + 1,
+                reps: set.reps,
+                weight: set.weight || 0,
+              })),
+            },
+          },
+          include: { sets: { orderBy: { setNumber: "asc" } } },
+        }),
+      );
+    }
+    return created;
+  });
+
+  const newlyUnlocked = await evaluateAchievementsSafely(userId, "workout");
+  return { workouts, newlyUnlocked };
+}
+
 async function getWorkouts(userId, { page = 1, limit = 20, category, startDate, endDate } = {}) {
   const where = {
     userId,
@@ -180,6 +217,7 @@ async function getRecentWorkouts(userId, days = 14) {
 }
 
 module.exports = {
+  createWorkoutBatch,
   createWorkout,
   getWorkouts,
   getWorkoutById,

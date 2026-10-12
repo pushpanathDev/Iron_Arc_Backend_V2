@@ -16,6 +16,26 @@ const workoutSchema = z.object({
     .max(50),
 });
 
+// POST /api/workouts/batch: one session = several workouts on one date.
+// Each entry is the single-create shape; its own date is optional and, if
+// given, must equal the batch date.
+const MAX_BATCH_ENTRIES = 30;
+const workoutBatchSchema = z
+  .object({
+    date: workoutSchema.shape.date,
+    entries: z
+      .array(workoutSchema.extend({ date: workoutSchema.shape.date.optional() }))
+      .min(1)
+      .max(MAX_BATCH_ENTRIES),
+  })
+  .superRefine((body, ctx) => {
+    body.entries.forEach((entry, i) => {
+      if (entry.date && entry.date !== body.date) {
+        ctx.addIssue({ code: "custom", path: ["entries", i, "date"], message: "entry date must match the batch date" });
+      }
+    });
+  });
+
 const workoutUpdateSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   exercise: z.string().min(1).max(100).optional(),
@@ -88,6 +108,7 @@ function validate(schema) {
 module.exports = {
   validate,
   workoutSchema,
+  workoutBatchSchema,
   workoutUpdateSchema,
   bodyWeightSchema,
   profileUpdateSchema,
