@@ -65,6 +65,7 @@ async function updateProfile(firebaseUid, data) {
     "age",
     "fitnessGoal",
     "weeklyGoal",
+    "targetWeight",
   ];
 
   const filtered = {};

@@ -68,6 +68,8 @@ const profileUpdateSchema = z.object({
   age: z.number().int().min(10).max(120).optional().nullable(),
   fitnessGoal: z.string().max(200).optional().nullable(),
   weeklyGoal: z.number().int().min(1).max(7).optional(),
+  // Target body weight in kg; null clears it. Same range the app allows for logging.
+  targetWeight: z.number().min(20).max(500).nullable().optional(),
 });
 
 const customExerciseSchema = z.object({
