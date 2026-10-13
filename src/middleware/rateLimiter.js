@@ -48,4 +48,19 @@ const adminLimiter = rateLimit({
   message: { success: false, message: 'Too many requests.' },
 });
 
-module.exports = { generalLimiter, planGenerationLimiter, userLimiter, adminLimiter };
+// ── Plan Coach Chat Limiter ─────────────────────────────────────────────
+// Chat messages are short AI calls; they get their own budget so a few
+// messages never block generating a plan (and vice versa).
+const planChatLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour window
+  max: parseInt(process.env.MAX_PLAN_CHATS_PER_HOUR) || 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Coach message limit reached for this hour. Your plan is unchanged.',
+  },
+  keyGenerator: (req) => req.user?.uid || req.ip,
+});
+
+module.exports = { generalLimiter, planGenerationLimiter, planChatLimiter, userLimiter, adminLimiter };

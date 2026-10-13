@@ -331,10 +331,28 @@ async function chatWithPlan(firebaseUid, planId, userMessage) {
   // Build prompt from plan data without the internal _chatHistory key
   const { _chatHistory: _omit, ...planDataForPrompt } = existingPlanData;
   const prompt = buildPlanChatPrompt(planDataForPrompt, history, userMessage, anonymized);
-  const response = await callGroqWithRetry(prompt);
+  let response;
+  try {
+    response = await callGroqWithRetry(prompt);
+  } catch (error) {
+    console.warn(`[planChat] AI call failed: ${error.message}`);
+    throw new Error("AI_UNAVAILABLE");
+  }
 
-  const aiMessage = response?.message ?? "I've processed your request.";
-  const modifiedPlan = response?.modifiedPlan ?? null;
+  let aiMessage = response?.message ?? "I've processed your request.";
+  let modifiedPlan = response?.modifiedPlan ?? null;
+
+  // A malformed or cut-off plan from the AI must not lose the reply: keep the
+  // current plan and say the change couldn't be applied.
+  if (modifiedPlan) {
+    try {
+      validateAndSanitizePlan(modifiedPlan, []);
+    } catch {
+      console.warn("[planChat] AI returned an invalid plan; keeping the current one");
+      modifiedPlan = null;
+      aiMessage = `${aiMessage} (I couldn't apply that change to your plan this time. Try asking for one change at a time.)`;
+    }
+  }
 
   // Append to chat history (keep last 40 messages to avoid bloat)
   const newHistory = [

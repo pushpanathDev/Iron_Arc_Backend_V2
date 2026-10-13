@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { verifyFirebaseToken, requireEmailVerified } = require('../middleware/authMiddleware');
-const { generalLimiter, planGenerationLimiter } = require('../middleware/rateLimiter');
+const { generalLimiter, planGenerationLimiter, planChatLimiter } = require('../middleware/rateLimiter');
 const { validate, substituteSchema } = require('../middleware/validation');
 const {
   generatePlan,
@@ -184,7 +184,7 @@ router.delete('/:id', verifyFirebaseToken, requireEmailVerified, async (req, res
 /* ── POST /api/plans/:id/chat ───────────────────────────────────────────
    Send a chat message to customise a plan via AI
 ────────────────────────────────────────────────────────────────────────── */
-router.post('/:id/chat', verifyFirebaseToken, requireEmailVerified, planGenerationLimiter, async (req, res, next) => {
+router.post('/:id/chat', verifyFirebaseToken, requireEmailVerified, planChatLimiter, async (req, res, next) => {
   try {
     const { message } = req.body;
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
@@ -198,6 +198,9 @@ router.post('/:id/chat', verifyFirebaseToken, requireEmailVerified, planGenerati
   } catch (error) {
     if (error.message === 'PLAN_NOT_FOUND') {
       return res.status(404).json({ success: false, message: 'Plan not found.' });
+    }
+    if (error.message === 'AI_UNAVAILABLE') {
+      return res.status(503).json({ success: false, message: "The coach couldn't answer right now. Please try again in a moment." });
     }
     next(error);
   }
