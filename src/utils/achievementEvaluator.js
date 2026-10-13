@@ -34,6 +34,8 @@ const MUSCLE_GROUP_MAP = {
 const METRIC_SOURCE = {
   currentStreak: "workout",
   longestStreak: "workout",
+  currentWeekStreak: "workout",
+  longestWeekStreak: "workout",
   bestWeekDays: "workout",
   consecutive4xWeeks: "workout",
   workoutDays: "workout",
@@ -93,6 +95,39 @@ function computeStreaks(dateKeys, todayKey) {
   return { currentStreak, longestStreak: longest };
 }
 
+/**
+ * Weeks in a row (Mon–Sun) with at least `goal` distinct workout days — the
+ * same streak the app shows on Home and Analytics. The current week counts
+ * once met; while it's still open it never breaks the run (the streak then
+ * ends last week).
+ */
+function computeWeekStreaks(dateKeys, todayKey, goal) {
+  const target = Math.max(1, goal || 1);
+  const perWeek = new Map();
+  for (const day of uniqueSortedDays(dateKeys)) {
+    const weekStart = day - ((weekdayOf(day) + 6) % 7);
+    perWeek.set(weekStart, (perWeek.get(weekStart) || 0) + 1);
+  }
+  const met = (weekStart) => (perWeek.get(weekStart) || 0) >= target;
+
+  const today = dayIndex(todayKey);
+  const thisWeek = today - ((weekdayOf(today) + 6) % 7);
+
+  let currentWeekStreak = 0;
+  for (let w = met(thisWeek) ? thisWeek : thisWeek - 7; met(w); w -= 7) currentWeekStreak += 1;
+
+  let longestWeekStreak = 0;
+  let run = 0;
+  const weeks = [...perWeek.keys()].sort((a, b) => a - b);
+  if (weeks.length) {
+    for (let w = weeks[0]; w <= Math.max(thisWeek, weeks[weeks.length - 1]); w += 7) {
+      run = met(w) ? run + 1 : 0;
+      if (run > longestWeekStreak) longestWeekStreak = run;
+    }
+  }
+  return { currentWeekStreak, longestWeekStreak };
+}
+
 /** Distinct workout days per Mon–Sun week. */
 function computeWeekly(dateKeys) {
   const perWeek = new Map();
@@ -123,38 +158,59 @@ function normalizeExercise(name) {
   return String(name || "").trim().toLowerCase();
 }
 
+/** Weights closer than this are equal (kg ↔ lb rounding). */
+const EPSILON_KG = 0.05;
+
+/** Estimated one-rep max (Epley). */
+const estimate1RM = (s) => (s.reps <= 1 ? s.weight : s.weight * (1 + s.reps / 30));
+
 /**
- * Exercises with at least one PR. A PR is a set heavier than every earlier
- * set of that exercise; the first workout of an exercise only sets the baseline.
+ * The app's PR rule (utils/exerciseHistory.ts → checkPR), so badges agree
+ * with the stars the user sees: a set beats the heaviest earlier weight
+ * lifted for at least as many reps, or beats every earlier estimated 1RM
+ * (more reps at the same weight, heavier and more reps). Bodyweight sets
+ * never count; there must be an earlier set to beat.
+ */
+function isPR(prior, set) {
+  if (set.weight <= 0 || set.reps <= 0 || prior.length === 0) return false;
+  let baseline = null;
+  let strongest = 0;
+  for (const p of prior) {
+    if (p.reps >= set.reps && (baseline === null || p.weight > baseline)) baseline = p.weight;
+    strongest = Math.max(strongest, estimate1RM(p));
+  }
+  if (baseline !== null && set.weight > baseline + EPSILON_KG) return true;
+  return estimate1RM(set) > strongest + EPSILON_KG;
+}
+
+/**
+ * Exercises with at least one PR. Same as the app: workouts of one exercise
+ * on the same day form one session, the first session is the baseline, and
+ * each later session is compared with all earlier ones.
  */
 function countPrExercises(workouts) {
   const byExercise = new Map();
   for (const w of workouts) {
     const name = normalizeExercise(w.exercise);
     if (!name) continue;
-    if (!byExercise.has(name)) byExercise.set(name, []);
-    byExercise.get(name).push(w);
+    const day = toDateKey(w.date);
+    if (!byExercise.has(name)) byExercise.set(name, new Map());
+    const sessions = byExercise.get(name);
+    if (!sessions.has(day)) sessions.set(day, []);
+    for (const s of w.sets || []) sessions.get(day).push({ weight: Number(s.weight) || 0, reps: Number(s.reps) || 0 });
   }
 
   let count = 0;
-  for (const list of byExercise.values()) {
-    list.sort((a, b) => {
-      const byDate = dayIndex(toDateKey(a.date)) - dayIndex(toDateKey(b.date));
-      if (byDate !== 0) return byDate;
-      return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
-    });
-
-    let best = null;
-    for (const w of list) {
-      const top = Math.max(0, ...(w.sets || []).map((s) => Number(s.weight) || 0));
-      if (best === null) {
-        best = top; // first time doing the exercise: baseline, not a PR
-        continue;
-      }
-      if (top > best) {
+  for (const sessions of byExercise.values()) {
+    const days = [...sessions.keys()].sort((a, b) => dayIndex(a) - dayIndex(b));
+    const prior = [...sessions.get(days[0])];
+    for (const day of days.slice(1)) {
+      const sets = sessions.get(day);
+      if (sets.some((s) => isPR(prior, s))) {
         count += 1;
         break;
       }
+      prior.push(...sets);
     }
   }
   return count;
@@ -205,7 +261,11 @@ function computeComeback(dateKeys) {
   return best;
 }
 
-function computeWorkoutMetrics(workouts, todayKey) {
+/**
+ * @param {number} [weeklyGoal] training days per week for the weekly streak
+ *   (the user's chosen training days, else their weekly goal).
+ */
+function computeWorkoutMetrics(workouts, todayKey, weeklyGoal = 3) {
   const dateKeys = workouts.map((w) => toDateKey(w.date));
 
   const perDay = new Map();
@@ -225,6 +285,7 @@ function computeWorkoutMetrics(workouts, todayKey) {
 
   return {
     ...computeStreaks(dateKeys, todayKey),
+    ...computeWeekStreaks(dateKeys, todayKey, weeklyGoal),
     ...computeWeekly(dateKeys),
     workoutDays: perDay.size,
     totalVolume: Math.round(totalVolume * 10) / 10,
@@ -261,8 +322,10 @@ module.exports = {
   METRIC_SOURCE,
   toDateKey,
   computeStreaks,
+  computeWeekStreaks,
   computeWeekly,
   countPrExercises,
+  isPR,
   computePersonalRecords,
   muscleGroupsCovered,
   computeComeback,

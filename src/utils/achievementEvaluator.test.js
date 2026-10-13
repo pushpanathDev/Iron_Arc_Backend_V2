@@ -7,6 +7,7 @@
 const path = require("path");
 const {
   computeStreaks,
+  computeWeekStreaks,
   computeWeekly,
   countPrExercises,
   computePersonalRecords,
@@ -88,6 +89,21 @@ check("latest day one ahead of server today (UTC+ user) counts as alive",
   computeStreaks(["2026-10-10", "2026-10-11"], "2026-10-10"),
   { currentStreak: 2, longestStreak: 2 });
 
+// ── Weekly streak (weeks in a row meeting the goal) ─────────────────────────
+console.log("\n# Week streaks");
+// Mondays: 2026-09-21, 09-28, 10-05. Goal 2 days a week.
+const twoAWeek = ["2026-09-21", "2026-09-23", "2026-09-28", "2026-09-30", "2026-10-05", "2026-10-07"];
+check("three weeks met, this week included", computeWeekStreaks(twoAWeek, "2026-10-08", 2), { currentWeekStreak: 3, longestWeekStreak: 3 });
+check("an open week doesn't break it (only Monday so far)",
+  computeWeekStreaks(["2026-09-21", "2026-09-23", "2026-09-28", "2026-09-30", "2026-10-05"], "2026-10-06", 2),
+  { currentWeekStreak: 2, longestWeekStreak: 2 });
+check("a missed week breaks the current streak, longest kept",
+  computeWeekStreaks(["2026-09-07", "2026-09-08", "2026-09-14", "2026-09-15", "2026-10-05", "2026-10-06"], "2026-10-06", 2),
+  { currentWeekStreak: 1, longestWeekStreak: 2 });
+check("rest days don't matter, only days per week",
+  computeWeekStreaks(["2026-09-21", "2026-09-27", "2026-09-28", "2026-10-04"], "2026-10-04", 2),
+  { currentWeekStreak: 2, longestWeekStreak: 2 });
+
 // ── Weekly consistency (Mon–Sun) ────────────────────────────────────────────
 console.log("\n# Weekly");
 // 2026-10-05 is a Monday.
@@ -108,9 +124,25 @@ check("heavier later set is a PR", countPrExercises([
   workout("2026-10-01", "Bench", "Chest", [{ reps: 5, weight: 60 }]),
   workout("2026-10-03", "Bench", "Chest", [{ reps: 5, weight: 62.5 }]),
 ]), 1);
-check("equal weight is not a PR", countPrExercises([
+check("identical set is not a PR", countPrExercises([
+  workout("2026-10-01", "Bench", "Chest", [{ reps: 5, weight: 60 }]),
+  workout("2026-10-03", "Bench", "Chest", [{ reps: 5, weight: 60 }]),
+]), 0);
+check("more reps at the same weight is a PR (app rule)", countPrExercises([
   workout("2026-10-01", "Bench", "Chest", [{ reps: 5, weight: 60 }]),
   workout("2026-10-03", "Bench", "Chest", [{ reps: 8, weight: 60 }]),
+]), 1);
+check("heavier and more reps is a PR", countPrExercises([
+  workout("2026-10-01", "Bench", "Chest", [{ reps: 8, weight: 80 }]),
+  workout("2026-10-03", "Bench", "Chest", [{ reps: 10, weight: 85 }]),
+]), 1);
+check("a light high-rep warm-up is not a PR", countPrExercises([
+  workout("2026-10-01", "Bench", "Chest", [{ reps: 8, weight: 80 }]),
+  workout("2026-10-03", "Bench", "Chest", [{ reps: 20, weight: 40 }]),
+]), 0);
+check("bodyweight sets never count", countPrExercises([
+  workout("2026-10-01", "Pull Up", "Back", [{ reps: 8, weight: 0 }]),
+  workout("2026-10-03", "Pull Up", "Back", [{ reps: 12, weight: 0 }]),
 ]), 0);
 check("exercise names are case/space-insensitive", countPrExercises([
   workout("2026-10-01", "Bench Press", "Chest", [{ reps: 5, weight: 60 }]),
@@ -123,10 +155,10 @@ check("counts exercises, not PR events", countPrExercises([
   workout("2026-10-01", "Row", "Back", [{ reps: 5, weight: 50 }]),
   workout("2026-10-04", "Row", "Back", [{ reps: 5, weight: 55 }]),
 ]), 2);
-check("same-day order uses createdAt", countPrExercises([
+check("same day is one session: the first day is the baseline", countPrExercises([
   workout("2026-10-01", "Curl", "Arms", [{ reps: 10, weight: 15 }], "2026-10-01T18:00:00Z"),
   workout("2026-10-01", "Curl", "Arms", [{ reps: 10, weight: 12 }], "2026-10-01T09:00:00Z"),
-]), 1);
+]), 0);
 
 // ── Comeback ────────────────────────────────────────────────────────────────
 console.log("\n# Comeback");
@@ -183,10 +215,10 @@ check("entries and distinct days",
 // ── Definitions ─────────────────────────────────────────────────────────────
 console.log("\n# Definitions");
 const byKey = Object.fromEntries(
-  evaluateDefinitions(ACHIEVEMENT_DEFINITIONS, { ...m, longestStreak: 7, currentStreak: 0 }).map((r) => [r.key, r]),
+  evaluateDefinitions(ACHIEVEMENT_DEFINITIONS, { ...m, longestWeekStreak: 4, currentWeekStreak: 1 }).map((r) => [r.key, r]),
 );
-check("streak_7 earned from LONGEST streak", byKey.streak_7.earned, true);
-check("streak_14 locked, progress shows CURRENT streak", [byKey.streak_14.earned, byKey.streak_14.progress], [false, 0]);
+check("streak_7 (4 weeks) earned from LONGEST week streak", byKey.streak_7.earned, true);
+check("streak_14 (8 weeks) locked, progress shows CURRENT week streak", [byKey.streak_14.earned, byKey.streak_14.progress], [false, 1]);
 check("muscle_groups_6 earned", byKey.muscle_groups_6.earned, true);
 check("double_session earned", byKey.double_session.earned, true);
 check("volume_1k earned (1,800 kg)", byKey.volume_1k.earned, true);
@@ -198,6 +230,7 @@ async function serviceChecks() {
   const state = { workouts: [], weights: [], achievements: [], customExercises: 0, plans: 0, generations: 0 };
   const fakeDb = {
     workout: { findMany: async () => state.workouts.filter((w) => !w.deletedAt) },
+    user: { findUnique: async () => ({ weeklyGoal: 4, trainingDays: [1, 3, 5] }) },
     bodyWeight: { findMany: async () => state.weights.filter((w) => !w.deletedAt) },
     customExercise: { count: async () => state.customExercises },
     plan: { count: async () => state.plans },

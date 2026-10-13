@@ -17,12 +17,14 @@ const TRIGGER_EVENTS = ["workout", "weight", "plan", "custom_exercise"];
 
 const ACHIEVEMENT_DEFINITIONS = [
   // ── Consistency / streaks ────────────────────────────────────────────
-  { key: "streak_3", title: "Momentum", description: "Reach a 3-day workout streak.", tier: "bronze", category: "consistency", targetValue: 3, triggerEvents: ["workout"], metric: "longestStreak", progressMetric: "currentStreak" },
-  { key: "streak_7", title: "Week Warrior", description: "Reach a 7-day workout streak.", tier: "silver", category: "consistency", targetValue: 7, triggerEvents: ["workout"], metric: "longestStreak", progressMetric: "currentStreak" },
-  { key: "streak_14", title: "Fortnight Fighter", description: "Reach a 14-day workout streak.", tier: "silver", category: "consistency", targetValue: 14, triggerEvents: ["workout"], metric: "longestStreak", progressMetric: "currentStreak" },
-  { key: "streak_30", title: "Month Master", description: "Reach a 30-day workout streak.", tier: "gold", category: "consistency", targetValue: 30, triggerEvents: ["workout"], metric: "longestStreak", progressMetric: "currentStreak" },
-  { key: "streak_60", title: "Relentless", description: "Reach a 60-day workout streak.", tier: "gold", category: "consistency", targetValue: 60, triggerEvents: ["workout"], metric: "longestStreak", progressMetric: "currentStreak" },
-  { key: "streak_100", title: "Century Streak", description: "Reach a 100-day workout streak.", tier: "gold", category: "consistency", targetValue: 100, triggerEvents: ["workout"], metric: "longestStreak", progressMetric: "currentStreak" },
+  // Weekly streaks: weeks in a row meeting the weekly goal (the app's streak). Keys kept from the
+  // old daily-streak badges so anything already earned stays earned.
+  { key: "streak_3", title: "Momentum", description: "Meet your weekly goal 2 weeks in a row.", tier: "bronze", category: "consistency", targetValue: 2, triggerEvents: ["workout"], metric: "longestWeekStreak", progressMetric: "currentWeekStreak" },
+  { key: "streak_7", title: "Week Warrior", description: "Meet your weekly goal 4 weeks in a row.", tier: "silver", category: "consistency", targetValue: 4, triggerEvents: ["workout"], metric: "longestWeekStreak", progressMetric: "currentWeekStreak" },
+  { key: "streak_14", title: "Two-Month Grind", description: "Meet your weekly goal 8 weeks in a row.", tier: "silver", category: "consistency", targetValue: 8, triggerEvents: ["workout"], metric: "longestWeekStreak", progressMetric: "currentWeekStreak" },
+  { key: "streak_30", title: "Quarter Strong", description: "Meet your weekly goal 12 weeks in a row.", tier: "gold", category: "consistency", targetValue: 12, triggerEvents: ["workout"], metric: "longestWeekStreak", progressMetric: "currentWeekStreak" },
+  { key: "streak_60", title: "Relentless", description: "Meet your weekly goal 26 weeks in a row.", tier: "gold", category: "consistency", targetValue: 26, triggerEvents: ["workout"], metric: "longestWeekStreak", progressMetric: "currentWeekStreak" },
+  { key: "streak_100", title: "Year of Iron", description: "Meet your weekly goal 52 weeks in a row.", tier: "gold", category: "consistency", targetValue: 52, triggerEvents: ["workout"], metric: "longestWeekStreak", progressMetric: "currentWeekStreak" },
   { key: "weekly_4x_once", title: "Consistent", description: "Train on 4 different days in one week (Mon–Sun).", tier: "bronze", category: "consistency", targetValue: 4, triggerEvents: ["workout"], metric: "bestWeekDays" },
   { key: "weekly_4x_4", title: "Consistency King", description: "Train on 4+ days a week for 4 weeks in a row.", tier: "silver", category: "consistency", targetValue: 4, triggerEvents: ["workout"], metric: "consecutive4xWeeks" },
 

@@ -42,12 +42,24 @@ async function countPlansGenerated(db, userId) {
   }
 }
 
+/** Days per week for the weekly streak: chosen training days, else the weekly goal (max 6). */
+async function weeklyGoalOf(db, userId) {
+  try {
+    const user = await db.user.findUnique({ where: { id: userId }, select: { weeklyGoal: true, trainingDays: true } });
+    const days = user?.trainingDays?.length || user?.weeklyGoal || 3;
+    return Math.min(6, Math.max(1, days));
+  } catch {
+    return 3;
+  }
+}
+
 /** Load only the data the given definitions need, using non-deleted rows. */
 async function loadMetrics(db, userId, definitions) {
   const sources = sourcesFor(definitions);
   const metrics = {};
 
   if (sources.has("workout")) {
+    const goal = await weeklyGoalOf(db, userId);
     const workouts = await db.workout.findMany({
       where: { userId, deletedAt: null },
       select: {
@@ -58,7 +70,7 @@ async function loadMetrics(db, userId, definitions) {
         sets: { select: { reps: true, weight: true } },
       },
     });
-    Object.assign(metrics, computeWorkoutMetrics(workouts, serverTodayKey()));
+    Object.assign(metrics, computeWorkoutMetrics(workouts, serverTodayKey(), goal));
   }
 
   if (sources.has("weight")) {
