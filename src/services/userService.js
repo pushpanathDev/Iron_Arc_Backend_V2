@@ -66,6 +66,11 @@ async function updateProfile(firebaseUid, data) {
     "fitnessGoal",
     "weeklyGoal",
     "targetWeight",
+    "experienceLevel",
+    "equipment",
+    "sessionMinutes",
+    "trainingDays",
+    "avoidAreas",
   ];
 
   const filtered = {};
@@ -73,6 +78,11 @@ async function updateProfile(firebaseUid, data) {
     if (data[key] !== undefined && key !== "weight") {
       filtered[key] = data[key];
     }
+  }
+  // Training days are the source of truth for "days per week" when given.
+  if (Array.isArray(filtered.trainingDays)) {
+    filtered.trainingDays = [...filtered.trainingDays].sort((a, b) => a - b);
+    if (filtered.trainingDays.length > 0) filtered.weeklyGoal = filtered.trainingDays.length;
   }
 
   const user = await prisma.$transaction(async (tx) => {

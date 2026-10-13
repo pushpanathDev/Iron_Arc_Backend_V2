@@ -13,6 +13,8 @@
  *
  * Fields that ARE safe and useful for planning (passed through):
  * - age, height (nullable), weight (nullable), fitnessGoal, weeklyGoal
+ * - training profile: experienceLevel, equipment, sessionMinutes, trainingDays
+ *   (weekday numbers), avoidAreas (body areas to go easy on); all nullable/empty
  *
  * Edge Case: height and weight can be null in Iron Arc (they are optional
  * onboarding fields). The anonymizer must pass null through — the planning
@@ -25,6 +27,11 @@ function anonymizeIronArcProfile(userProfile, userId) {
     weight: userProfile.weight ?? null,       // nullable — handle in prompt
     fitnessGoal: userProfile.fitnessGoal ?? 'general',
     weeklyGoal: userProfile.weeklyGoal ?? 3,
+    experienceLevel: userProfile.experienceLevel ?? null,
+    equipment: userProfile.equipment ?? null,
+    sessionMinutes: userProfile.sessionMinutes ?? null,
+    trainingDays: Array.isArray(userProfile.trainingDays) ? userProfile.trainingDays : [],
+    avoidAreas: Array.isArray(userProfile.avoidAreas) ? userProfile.avoidAreas : [],
     // Opaque session reference — non-reversible, used for logging only
     sessionRef: `arc_${Buffer.from(userId).toString('base64').slice(0, 8)}`,
   };

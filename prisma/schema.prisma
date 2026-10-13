@@ -20,6 +20,17 @@ model User {
   weeklyGoal    Int      @default(4) @map("weekly_goal")
   /// Optional target body weight in kg, set by the user (null = no goal).
   targetWeight  Float?   @map("target_weight")
+  /// Training profile, asked once at onboarding (all optional for older accounts).
+  /// beginner | intermediate | advanced
+  experienceLevel String? @map("experience_level")
+  /// full_gym | dumbbells | bodyweight
+  equipment       String?
+  /// 30 | 45 | 60 | 90
+  sessionMinutes  Int?    @map("session_minutes")
+  /// ISO weekdays the user trains on, 1 = Monday … 7 = Sunday (max 6). weeklyGoal mirrors its length.
+  trainingDays    Int[]   @default([]) @map("training_days")
+  /// Areas to go easy on: knees | lower_back | shoulders | wrists
+  avoidAreas      String[] @default([]) @map("avoid_areas")
   isAdmin       Boolean  @default(false) @map("is_admin")
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at")

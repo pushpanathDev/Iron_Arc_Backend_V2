@@ -85,8 +85,33 @@ async function callGroqWithRetry(prompt, maxRetries = 2) {
   Prompt builders
 ───────────────────────────────────────────────────────────── */
 
+const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const AVOID_LABELS = { knees: 'knees', lower_back: 'lower back', shoulders: 'shoulders', wrists: 'wrists' };
+const AVOID_RULES = {
+  knees: 'Avoid jumps, deep lunges and very deep squats; prefer box squats, leg press with controlled range, hamstring and glute work.',
+  lower_back: 'Avoid heavy deadlifts and unsupported bent-over rows; prefer chest-supported rows, machine and core-bracing work.',
+  shoulders: 'Avoid behind-the-neck presses, dips and very wide-grip pressing; prefer neutral-grip and landmine-style pressing.',
+  wrists: 'Avoid push-ups on flat palms and heavy straight-bar curls; prefer dumbbells, neutral grips and machines.',
+};
+
+/** Split from days per week when the user didn't choose one. */
+function defaultSplit(days) {
+  if (days <= 3) return 'full_body';
+  if (days === 4) return 'upper_lower';
+  return 'push_pull_legs';
+}
+
+/** Progression from experience when the user didn't choose one. */
+function defaultProgression(experience) {
+  return { beginner: 'linear', intermediate: 'undulating', advanced: 'block' }[experience] || 'linear';
+}
+
 function buildGeneratePlanPrompt(anonymizedProfile, recentWorkouts = [], criteria = {}) {
-  const { age, height, weight, fitnessGoal, weeklyGoal } = anonymizedProfile;
+  const { age, height, weight, fitnessGoal } = anonymizedProfile;
+  const trainingDays = Array.isArray(anonymizedProfile.trainingDays) ? anonymizedProfile.trainingDays : [];
+  const avoidAreas = Array.isArray(anonymizedProfile.avoidAreas) ? anonymizedProfile.avoidAreas : [];
+  // Chosen weekdays decide the session count when the user picked them.
+  const weeklyGoal = trainingDays.length > 0 ? trainingDays.length : anonymizedProfile.weeklyGoal;
 
   const bodyContext = height && weight
     ? `Height: ${height}cm, Weight: ${weight}kg`
@@ -96,12 +121,13 @@ function buildGeneratePlanPrompt(anonymizedProfile, recentWorkouts = [], criteri
     ? `Weight: ${weight}kg, Height: not provided`
     : 'Height and weight not provided — build plan based on goal and age only';
 
-  // ── Criteria with sensible defaults ──────────────────────────────────
-  const sessionDuration = criteria.sessionDuration ?? 60;
-  const equipment = criteria.equipment ?? 'full_gym';
-  const experienceLevel = criteria.experienceLevel ?? 'intermediate';
-  const splitPreference = criteria.splitPreference ?? 'push_pull_legs';
-  const progressionStyle = criteria.progressionStyle ?? 'linear';
+  // ── Criteria: the plan form, else the user's training profile, else defaults ──
+  const sessionDuration = criteria.sessionDuration ?? anonymizedProfile.sessionMinutes ?? 60;
+  const equipment = criteria.equipment ?? anonymizedProfile.equipment ?? 'full_gym';
+  const experienceLevel = criteria.experienceLevel ?? anonymizedProfile.experienceLevel ?? 'intermediate';
+  // Split and progression follow from days and experience when not chosen.
+  const splitPreference = criteria.splitPreference ?? defaultSplit(weeklyGoal);
+  const progressionStyle = criteria.progressionStyle ?? defaultProgression(experienceLevel);
   const priorityMuscles = Array.isArray(criteria.priorityMuscles) && criteria.priorityMuscles.length > 0
     ? criteria.priorityMuscles
     : null;
@@ -129,12 +155,20 @@ function buildGeneratePlanPrompt(anonymizedProfile, recentWorkouts = [], criteri
     aggressive: 'Start at 75-80% estimated 1RM. Push to near failure on final set. Increase load as soon as all sets are clean.'
   }[intensity] || 'Use moderate load progression.';
 
-  // ── Rest day layout ───────────────────────────────────────────────────
-  const restDayNote = {
+  // ── Rest day layout: the user's own weekdays when known ───────────────
+  const dayNames = trainingDays.map((d) => WEEKDAY_NAMES[d - 1]).filter(Boolean);
+  const restDayNote = dayNames.length > 0
+    ? `Schedule the training days ONLY on: ${dayNames.join(', ')}. Every other day of the week is a rest day.`
+    : {
     spread: 'Distribute rest days evenly between training days (e.g. Mon/Wed/Fri training, Tue/Thu rest).',
     weekends: 'Schedule all training days Mon–Fri and both rest days on Sat–Sun.',
     back_to_back: 'Group all rest days consecutively at the end of the training block (e.g. Fri-Sat-Sun rest).'
   }[restDayLayout] || 'Spread rest days evenly.';
+
+  // ── Areas to go easy on ───────────────────────────────────────────────
+  const avoidNote = avoidAreas.length > 0
+    ? `The user asked to go easy on: ${avoidAreas.map((a) => AVOID_LABELS[a] || a).join(', ')}. ${avoidAreas.map((a) => AVOID_RULES[a]).filter(Boolean).join(' ')}`
+    : null;
 
   // ── Exercise count based on session duration ──────────────────────────
   const maxExercises = sessionDuration <= 30 ? 4 : sessionDuration <= 45 ? 5 : sessionDuration <= 60 ? 7 : 9;
@@ -161,7 +195,8 @@ USER-SELECTED PLAN CRITERIA
 - Progression System: ${progressionStyle} progression
 - Progression Intensity: ${intensity}
 ${priorityMuscles ? `- Priority Muscles (add 20-30% extra volume): ${priorityMuscles.join(', ')}` : '- No specific priority muscles'}
-- Rest Day Layout: ${restDayLayout.replace(/_/g, ' ')}
+- Rest Days: ${dayNames.length > 0 ? `trains on ${dayNames.join(', ')}` : restDayLayout.replace(/_/g, ' ')}
+${avoidAreas.length > 0 ? `- Go easy on: ${avoidAreas.map((a) => AVOID_LABELS[a] || a).join(', ')}` : '- No areas to avoid'}
 
 ═══════════════════════════════════════════════
 RECENT WORKOUT HISTORY (last 5 sessions)
@@ -191,7 +226,7 @@ MANDATORY PLANNING RULES
 10. PROGRESSION: ${progressionRules}
 11. INTENSITY: ${intensityNote}
 ${priorityMuscles ? `12. PRIORITY MUSCLES: Add 1-2 extra sets for ${priorityMuscles.join(' and ')} compared to other muscle groups` : ''}
-13. Never train the same muscle group on consecutive days
+${avoidNote ? `12b. LIMITATIONS: ${avoidNote}\n` : ''}13. Never train the same muscle group on consecutive days
 14. Include a planExplanation (3-4 sentences) explaining the split choice, progression logic, and how criteria were applied
 
 ═══════════════════════════════════════════════

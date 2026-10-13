@@ -70,6 +70,17 @@ const profileUpdateSchema = z.object({
   weeklyGoal: z.number().int().min(1).max(7).optional(),
   // Target body weight in kg; null clears it. Same range the app allows for logging.
   targetWeight: z.number().min(20).max(500).nullable().optional(),
+  // Training profile (onboarding). Fixed vocabularies so the plan prompt only sees known values.
+  experienceLevel: z.enum(["beginner", "intermediate", "advanced"]).nullable().optional(),
+  equipment: z.enum(["full_gym", "dumbbells", "bodyweight"]).nullable().optional(),
+  sessionMinutes: z.union([z.literal(30), z.literal(45), z.literal(60), z.literal(90)]).nullable().optional(),
+  // ISO weekdays (1 = Mon … 7 = Sun), at most 6: one rest day minimum.
+  trainingDays: z
+    .array(z.number().int().min(1).max(7))
+    .max(6)
+    .refine((days) => new Set(days).size === days.length, "training days must not repeat")
+    .optional(),
+  avoidAreas: z.array(z.enum(["knees", "lower_back", "shoulders", "wrists"])).max(4).optional(),
 });
 
 const customExerciseSchema = z.object({
