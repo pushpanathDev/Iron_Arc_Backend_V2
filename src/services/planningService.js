@@ -331,9 +331,16 @@ async function chatWithPlan(firebaseUid, planId, userMessage) {
   // Build prompt from plan data without the internal _chatHistory key
   const { _chatHistory: _omit, ...planDataForPrompt } = existingPlanData;
   const prompt = buildPlanChatPrompt(planDataForPrompt, history, userMessage, anonymized);
+  const weeks = Array.isArray(planDataForPrompt.weeks) ? planDataForPrompt.weeks.length : 0;
+  console.log(`[planChat] prompt ${prompt.length} chars · plan ${weeks} week(s) · history ${history.length} messages`);
   let response;
   try {
     response = await callGroqWithRetry(prompt);
+    console.log(
+      `[planChat] AI reply keys: ${Object.keys(response || {}).join(", ") || "(none)"} · modifiedPlan: ${
+        response?.modifiedPlan ? `${Array.isArray(response.modifiedPlan.weeks) ? response.modifiedPlan.weeks.length : "no"} week(s)` : "null"
+      }`,
+    );
   } catch (error) {
     console.warn(`[planChat] AI call failed: ${error.message}`);
     throw new Error("AI_UNAVAILABLE");
@@ -348,7 +355,7 @@ async function chatWithPlan(firebaseUid, planId, userMessage) {
     try {
       validateAndSanitizePlan(modifiedPlan, []);
     } catch {
-      console.warn("[planChat] AI returned an invalid plan; keeping the current one");
+      console.warn(`[planChat] AI returned an invalid plan (keys: ${Object.keys(modifiedPlan).join(", ")}); keeping the current one`);
       modifiedPlan = null;
       aiMessage = `${aiMessage} (I couldn't apply that change to your plan this time. Try asking for one change at a time.)`;
     }
@@ -373,6 +380,7 @@ async function chatWithPlan(firebaseUid, planId, userMessage) {
     where: { id: planId },
     data: { planData: updatedPlanData },
   });
+  console.log(`[planChat] saved · planUpdated=${Boolean(modifiedPlan)} · history now ${newHistory.length}`);
 
   return {
     message: aiMessage,

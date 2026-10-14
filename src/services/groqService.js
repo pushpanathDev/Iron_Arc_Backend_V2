@@ -50,6 +50,10 @@ async function callGroqWithRetry(prompt, maxRetries = 2) {
       });
 
       const text = completion.choices[0]?.message?.content || '';
+      const usage = completion.usage || {};
+      console.log(
+        `[AI] attempt ${attempt}: finish=${completion.choices[0]?.finish_reason} · tokens in=${usage.prompt_tokens ?? '?'} out=${usage.completion_tokens ?? '?'} · ${text.length} chars`,
+      );
 
       // Strip any accidental fences (defensive)
       const cleaned = text

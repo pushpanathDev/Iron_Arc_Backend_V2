@@ -193,9 +193,13 @@ router.post('/:id/chat', verifyFirebaseToken, requireEmailVerified, planChatLimi
     if (message.trim().length > 1000) {
       return res.status(400).json({ success: false, message: 'Message is too long (max 1000 characters).' });
     }
+    const started = Date.now();
+    console.log(`[planChat] ← message for plan ${req.params.id} (${message.trim().length} chars)`);
     const result = await chatWithPlan(req.user.uid, req.params.id, message.trim());
+    console.log(`[planChat] → 200 in ${Date.now() - started} ms · planUpdated=${result.planUpdated}`);
     res.status(200).json({ success: true, data: result });
   } catch (error) {
+    console.warn(`[planChat] ✗ ${error.message}`);
     if (error.message === 'PLAN_NOT_FOUND') {
       return res.status(404).json({ success: false, message: 'Plan not found.' });
     }
