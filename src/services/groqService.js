@@ -28,7 +28,13 @@ function extractRetryDelaySecs(error) {
   return null;
 }
 
-async function callGroqWithRetry(prompt, maxRetries = 2) {
+/**
+ * @param {string} prompt
+ * @param {number} [maxRetries]
+ * @param {{ maxTokens?: number }} [options] smaller replies (chat) stay well inside the
+ *   free tier's tokens-per-minute limit.
+ */
+async function callGroqWithRetry(prompt, maxRetries = 2, options = {}) {
   let lastError;
   const maxAttempts = maxRetries + 1;
 
@@ -45,7 +51,7 @@ async function callGroqWithRetry(prompt, maxRetries = 2) {
           { role: 'user', content: prompt },
         ],
         temperature: 0.7,
-        max_tokens: 8192,
+        max_tokens: options.maxTokens || 8192,
         response_format: { type: 'json_object' },
       });
 
@@ -64,6 +70,12 @@ async function callGroqWithRetry(prompt, maxRetries = 2) {
       return JSON.parse(cleaned);
     } catch (error) {
       lastError = error;
+      // 413 = the request itself is over the model's per-minute token limit: retrying
+      // the same request can never succeed, so stop now.
+      if (error?.status === 413) {
+        console.warn(`[AI] Request too large (413), not retrying: ${error.message}`);
+        throw new Error(`AI_REQUEST_TOO_LARGE: ${error.message}`);
+      }
       const is429 = error?.status === 429 || (error?.message || '').includes('429');
 
       console.warn(`[AI] Attempt ${attempt}/${maxAttempts} failed: ${error.message}`);
@@ -360,71 +372,50 @@ Return ONLY valid JSON:
  * @param {string} userMessage - The new message from the user
  * @param {object} profile   - Anonymized user profile for context
  */
-function buildPlanChatPrompt(planData, history = [], userMessage, profile = {}) {
-  const recentHistory = history.slice(-10); // Keep last 10 messages for context
-
+/**
+ * Coach chat. Sends one compact week (short keys, no indentation) instead of the
+ * whole multi-week plan: the full pretty-printed plan was ~9,600 tokens, over the
+ * model's 8,000 tokens-per-minute limit. The AI answers with the changed days only.
+ *
+ * Week format (short keys):
+ *   rest day:     { "d": "tuesday", "t": "rest" }
+ *   training day: { "d": "monday", "m": ["chest"], "min": 60,
+ *                   "x": [{ "id": "bench_press", "n": "Barbell Bench Press", "s": 4, "r": "6-8", "rest": 90 }] }
+ */
+function buildPlanChatPrompt(weekDays, history = [], userMessage, profile = {}, meta = {}) {
+  const recentHistory = history.slice(-6);
   const historyText = recentHistory.length > 0
-    ? recentHistory
-        .map(m => `${m.role === 'user' ? 'User' : 'Trainer'}: ${m.content}`)
-        .join('\n')
-    : 'No previous messages.';
+    ? recentHistory.map(m => `${m.role === 'user' ? 'User' : 'Coach'}: ${m.content}`).join('\n')
+    : 'None.';
 
   const profileSummary = [
     profile.fitnessGoal && `Goal: ${profile.fitnessGoal}`,
     profile.age && `Age: ${profile.age}`,
     profile.experienceLevel && `Experience: ${profile.experienceLevel}`,
-  ].filter(Boolean).join(' · ') || 'Profile not provided';
+    profile.equipment && `Equipment: ${profile.equipment}`,
+    profile.sessionMinutes && `Session: ${profile.sessionMinutes} min`,
+  ].filter(Boolean).join(' · ') || 'Not provided';
 
-  return `
-You are an expert AI personal trainer helping a user customise their workout plan through chat.
-You have full access to their current plan and can modify it based on their requests.
+  return `You are a personal trainer coaching a user through chat about their weekly workout plan.
 
-═══════════════════════════════════════
-USER PROFILE
-═══════════════════════════════════════
-${profileSummary}
+PROFILE: ${profileSummary}
+PLAN: ${meta.weeks || 1} week(s); the user is on week ${meta.weekNumber || 1}. This is that week (short keys: d=day, t=rest, m=muscles, min=minutes, x=exercises with id, n=name, s=sets, r=reps, rest=seconds):
+${JSON.stringify(weekDays)}
 
-═══════════════════════════════════════
-CURRENT PLAN (JSON)
-═══════════════════════════════════════
-${JSON.stringify(planData, null, 2)}
-
-═══════════════════════════════════════
-CONVERSATION HISTORY
-═══════════════════════════════════════
+RECENT CHAT:
 ${historyText}
 
-═══════════════════════════════════════
-USER'S NEW MESSAGE
-═══════════════════════════════════════
-"${userMessage}"
+USER: "${userMessage}"
 
-═══════════════════════════════════════
-YOUR TASK
-═══════════════════════════════════════
-1. Understand what the user wants
-2. If they want to MODIFY the plan (add, remove, change exercises, volume, rest, split, etc.):
-   - Make the change to the plan JSON
-   - Write a friendly 1-2 sentence explanation of what you changed and why
-   - Return the COMPLETE updated plan in modifiedPlan
-3. If they are asking a QUESTION (technique, nutrition, motivation, etc.):
-   - Answer helpfully and concisely
-   - Do NOT modify the plan — return null for modifiedPlan
-4. Be conversational, supportive, and specific — like a real coach
+RULES:
+- To CHANGE the plan (days, exercises, sets, reps, rest, session length): return the full week in the same short-key format as "modifiedDays", all 7 days Monday to Sunday, rest days as {"d":"<day>","t":"rest"}. It replaces this week and the weeks after it.
+- To ANSWER a question (technique, nutrition, motivation): return "modifiedDays": null.
+- Never train the same muscle group on consecutive days. Keep sessions within the minutes given.
+- Exercise ids only from: bench_press, dumbbell_press, incline_press, push_up, overhead_press, db_shoulder_press, lateral_raise, tricep_dip, tricep_pushdown, pull_up, lat_pulldown, barbell_row, dumbbell_row, seated_cable_row, bicep_curl, db_bicep_curl, squat, goblet_squat, bodyweight_squat, deadlift, rdl, leg_press, lunge, leg_curl, calf_raise, plank, crunch, leg_raise, russian_twist, jump_rope, burpee, mountain_climber.
+- "message": 1–3 friendly sentences, like a real coach, saying what you changed or answering.
 
-VALID EXERCISE IDs (only use these if adding exercises):
-bench_press, dumbbell_press, incline_press, push_up, overhead_press, db_shoulder_press,
-lateral_raise, tricep_dip, tricep_pushdown, pull_up, lat_pulldown, barbell_row,
-dumbbell_row, seated_cable_row, bicep_curl, db_bicep_curl, squat, goblet_squat,
-bodyweight_squat, deadlift, rdl, leg_press, lunge, leg_curl, calf_raise,
-plank, crunch, leg_raise, russian_twist, jump_rope, burpee, mountain_climber
-
-RETURN ONLY VALID JSON — no markdown, no code fences:
-{
-  "message": "Your friendly response to the user (1-3 sentences)",
-  "modifiedPlan": null | { /* complete updated plan with same structure as input */ }
-}
-`;
+Return ONLY this JSON, no markdown:
+{"message": "...", "modifiedDays": null}`;
 }
 
 module.exports = {

@@ -1,6 +1,7 @@
 const { prisma } = require("../config/database");
 const { anonymizeIronArcProfile } = require("../utils/anonymizer");
 const { validateAndSanitizePlan } = require("../utils/planValidator");
+const { compactWeek, applyWeekChange } = require("../utils/planChat");
 const { EXERCISE_DB, isValidExerciseId, getSubstituteExerciseId } = require("../utils/exerciseDatabase");
 const {
   callGroqWithRetry,
@@ -330,15 +331,18 @@ async function chatWithPlan(firebaseUid, planId, userMessage) {
 
   // Build prompt from plan data without the internal _chatHistory key
   const { _chatHistory: _omit, ...planDataForPrompt } = existingPlanData;
-  const prompt = buildPlanChatPrompt(planDataForPrompt, history, userMessage, anonymized);
   const weeks = Array.isArray(planDataForPrompt.weeks) ? planDataForPrompt.weeks.length : 0;
+  const prompt = buildPlanChatPrompt(compactWeek(planDataForPrompt, plan.weekNumber), history, userMessage, anonymized, {
+    weeks,
+    weekNumber: plan.weekNumber,
+  });
   console.log(`[planChat] prompt ${prompt.length} chars · plan ${weeks} week(s) · history ${history.length} messages`);
   let response;
   try {
-    response = await callGroqWithRetry(prompt);
+    response = await callGroqWithRetry(prompt, 2, { maxTokens: 3000 });
     console.log(
-      `[planChat] AI reply keys: ${Object.keys(response || {}).join(", ") || "(none)"} · modifiedPlan: ${
-        response?.modifiedPlan ? `${Array.isArray(response.modifiedPlan.weeks) ? response.modifiedPlan.weeks.length : "no"} week(s)` : "null"
+      `[planChat] AI reply keys: ${Object.keys(response || {}).join(", ") || "(none)"} · modifiedDays: ${
+        Array.isArray(response?.modifiedDays) ? `${response.modifiedDays.length} day(s)` : "null"
       }`,
     );
   } catch (error) {
@@ -347,7 +351,10 @@ async function chatWithPlan(firebaseUid, planId, userMessage) {
   }
 
   let aiMessage = response?.message ?? "I've processed your request.";
-  let modifiedPlan = response?.modifiedPlan ?? null;
+  // The changed week, applied to the current and later weeks (older replies may still send a full plan).
+  let modifiedPlan = Array.isArray(response?.modifiedDays) && response.modifiedDays.length > 0
+    ? applyWeekChange(planDataForPrompt, plan.weekNumber, response.modifiedDays)
+    : response?.modifiedPlan ?? null;
 
   // A malformed or cut-off plan from the AI must not lose the reply: keep the
   // current plan and say the change couldn't be applied.
