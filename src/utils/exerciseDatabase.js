@@ -1,101 +1,112 @@
 /**
- * Server-side exercise database for Iron Arc backend.
+ * The exercises the AI planner may use: the lists in every plan prompt, the
+ * check on ids the AI returns (it can invent names), swaps, and the order of
+ * a session. The app has its own, larger exercise list; this one only has to
+ * cover what plans use.
  *
- * Purpose:
- * 1. Validate exercise IDs returned by Groq (Groq may hallucinate names)
- * 2. Find biomechanically equivalent substitutes
- *
- * This is the backend safety net. It does NOT need to match exercises.ts
- * in the React Native app exactly — it just needs to cover common exercises
- * so Groq's output can be validated and corrected before reaching the app.
- *
- * Iron Arc's app can also override/extend exercises via exerciseCatalog/v1
- * in Firestore — that is a separate client-side concern, not this file's job.
+ * order: where it goes in a session. 1 heavy compound lifts, 2 secondary
+ * compounds, 3 isolation, 4 core and conditioning.
+ * equipment: what it needs (see EQUIPMENT_TAGS); none means bodyweight.
  */
 const EXERCISE_DB = {
   // ── Push (Chest / Shoulders / Triceps) ──────────────────────────────
-  bench_press:       { name: 'Barbell Bench Press',     muscles: ['chest', 'triceps', 'shoulders'], equipment: ['barbell'] },
-  dumbbell_press:    { name: 'Dumbbell Bench Press',    muscles: ['chest', 'triceps'],              equipment: ['dumbbells'] },
-  incline_press:     { name: 'Incline Barbell Press',   muscles: ['chest', 'shoulders'],            equipment: ['barbell'] },
-  push_up:           { name: 'Push Up',                 muscles: ['chest', 'triceps'],              equipment: [] },
-  overhead_press:    { name: 'Overhead Press',          muscles: ['shoulders', 'triceps'],          equipment: ['barbell'] },
-  db_shoulder_press: { name: 'Dumbbell Shoulder Press', muscles: ['shoulders', 'triceps'],          equipment: ['dumbbells'] },
-  lateral_raise:     { name: 'Lateral Raise',           muscles: ['shoulders'],                     equipment: ['dumbbells'] },
-  tricep_dip:        { name: 'Tricep Dip',              muscles: ['triceps', 'chest'],              equipment: [] },
-  tricep_pushdown:   { name: 'Tricep Pushdown',         muscles: ['triceps'],                       equipment: ['cables'] },
+  bench_press:       { name: "Barbell Bench Press",     order: 1, muscles: ["chest", "triceps", "shoulders"], equipment: ["barbell"] },
+  dumbbell_press:    { name: "Dumbbell Bench Press",    order: 2, muscles: ["chest", "triceps"],              equipment: ["dumbbells"] },
+  incline_press:     { name: "Incline Barbell Press",   order: 1, muscles: ["chest", "shoulders"],            equipment: ["barbell"] },
+  push_up:           { name: "Push Up",                 order: 2, muscles: ["chest", "triceps"],              equipment: [] },
+  overhead_press:    { name: "Overhead Press",          order: 1, muscles: ["shoulders", "triceps"],          equipment: ["barbell"] },
+  db_shoulder_press: { name: "Dumbbell Shoulder Press", order: 2, muscles: ["shoulders", "triceps"],          equipment: ["dumbbells"] },
+  lateral_raise:     { name: "Lateral Raise",           order: 3, muscles: ["shoulders"],                     equipment: ["dumbbells"] },
+  tricep_dip:        { name: "Tricep Dip",              order: 2, muscles: ["triceps", "chest"],              equipment: [] },
+  tricep_pushdown:   { name: "Tricep Pushdown",         order: 3, muscles: ["triceps"],                       equipment: ["cables"] },
 
   // ── Pull (Back / Biceps) ─────────────────────────────────────────────
-  pull_up:           { name: 'Pull Up',                 muscles: ['back', 'biceps'],                equipment: ['pull_up_bar'] },
-  lat_pulldown:      { name: 'Lat Pulldown',            muscles: ['back', 'biceps'],                equipment: ['cables'] },
-  barbell_row:       { name: 'Barbell Row',             muscles: ['back', 'biceps'],                equipment: ['barbell'] },
-  dumbbell_row:      { name: 'Dumbbell Row',            muscles: ['back'],                          equipment: ['dumbbells'] },
-  seated_cable_row:  { name: 'Seated Cable Row',        muscles: ['back', 'biceps'],                equipment: ['cables'] },
-  bicep_curl:        { name: 'Barbell Bicep Curl',      muscles: ['biceps'],                        equipment: ['barbell'] },
-  db_bicep_curl:     { name: 'Dumbbell Bicep Curl',     muscles: ['biceps'],                        equipment: ['dumbbells'] },
+  pull_up:           { name: "Pull Up",                 order: 1, muscles: ["back", "biceps"],                equipment: ["pull_up_bar"] },
+  lat_pulldown:      { name: "Lat Pulldown",            order: 2, muscles: ["back", "biceps"],                equipment: ["cables"] },
+  barbell_row:       { name: "Barbell Row",             order: 1, muscles: ["back", "biceps"],                equipment: ["barbell"] },
+  dumbbell_row:      { name: "Dumbbell Row",            order: 2, muscles: ["back"],                          equipment: ["dumbbells"] },
+  seated_cable_row:  { name: "Seated Cable Row",        order: 2, muscles: ["back", "biceps"],                equipment: ["cables"] },
+  bicep_curl:        { name: "Barbell Bicep Curl",      order: 3, muscles: ["biceps"],                        equipment: ["barbell"] },
+  db_bicep_curl:     { name: "Dumbbell Bicep Curl",     order: 3, muscles: ["biceps"],                        equipment: ["dumbbells"] },
 
   // ── Legs ─────────────────────────────────────────────────────────────
-  squat:             { name: 'Barbell Squat',           muscles: ['quads', 'glutes', 'hamstrings'], equipment: ['barbell'] },
-  goblet_squat:      { name: 'Goblet Squat',            muscles: ['quads', 'glutes'],               equipment: ['dumbbells'] },
-  bodyweight_squat:  { name: 'Bodyweight Squat',        muscles: ['quads', 'glutes'],               equipment: [] },
-  deadlift:          { name: 'Deadlift',                muscles: ['hamstrings', 'glutes', 'back'],  equipment: ['barbell'] },
-  rdl:               { name: 'Romanian Deadlift',       muscles: ['hamstrings', 'glutes'],          equipment: ['barbell'] },
-  leg_press:         { name: 'Leg Press',               muscles: ['quads', 'glutes'],               equipment: ['machines'] },
-  lunge:             { name: 'Dumbbell Lunge',          muscles: ['quads', 'glutes'],               equipment: ['dumbbells'] },
-  leg_curl:          { name: 'Leg Curl',                muscles: ['hamstrings'],                    equipment: ['machines'] },
-  calf_raise:        { name: 'Calf Raise',              muscles: ['calves'],                        equipment: [] },
+  squat:             { name: "Barbell Squat",           order: 1, muscles: ["quads", "glutes", "hamstrings"], equipment: ["barbell"] },
+  goblet_squat:      { name: "Goblet Squat",            order: 2, muscles: ["quads", "glutes"],               equipment: ["dumbbells"] },
+  bodyweight_squat:  { name: "Bodyweight Squat",        order: 2, muscles: ["quads", "glutes"],               equipment: [] },
+  deadlift:          { name: "Deadlift",                order: 1, muscles: ["hamstrings", "glutes", "back"],  equipment: ["barbell"] },
+  rdl:               { name: "Romanian Deadlift",       order: 2, muscles: ["hamstrings", "glutes"],          equipment: ["barbell"] },
+  leg_press:         { name: "Leg Press",               order: 2, muscles: ["quads", "glutes"],               equipment: ["machines"] },
+  lunge:             { name: "Dumbbell Lunge",          order: 2, muscles: ["quads", "glutes"],               equipment: ["dumbbells"] },
+  leg_curl:          { name: "Leg Curl",                order: 3, muscles: ["hamstrings"],                    equipment: ["machines"] },
+  calf_raise:        { name: "Calf Raise",              order: 3, muscles: ["calves"],                        equipment: [] },
 
   // ── Core ─────────────────────────────────────────────────────────────
-  plank:             { name: 'Plank',                   muscles: ['core'],                          equipment: [] },
-  crunch:            { name: 'Crunch',                  muscles: ['core'],                          equipment: [] },
-  leg_raise:         { name: 'Leg Raise',               muscles: ['core'],                          equipment: [] },
-  russian_twist:     { name: 'Russian Twist',           muscles: ['core'],                          equipment: [] },
+  plank:             { name: "Plank",                   order: 4, muscles: ["core"],                          equipment: [] },
+  crunch:            { name: "Crunch",                  order: 4, muscles: ["core"],                          equipment: [] },
+  leg_raise:         { name: "Leg Raise",               order: 4, muscles: ["core"],                          equipment: [] },
+  russian_twist:     { name: "Russian Twist",           order: 4, muscles: ["core"],                          equipment: [] },
 
   // ── Cardio / Conditioning ─────────────────────────────────────────────
-  jump_rope:         { name: 'Jump Rope',               muscles: [],                                equipment: ['jump_rope'] },
-  burpee:            { name: 'Burpee',                  muscles: ['full_body'],                     equipment: [] },
-  mountain_climber:  { name: 'Mountain Climber',        muscles: ['core', 'full_body'],             equipment: [] },
+  jump_rope:         { name: "Jump Rope",               order: 4, muscles: [],                                equipment: ["jump_rope"] },
+  burpee:            { name: "Burpee",                  order: 4, muscles: ["full_body"],                     equipment: [] },
+  mountain_climber:  { name: "Mountain Climber",        order: 4, muscles: ["core", "full_body"],             equipment: [] },
 };
 
-/**
- * Checks if an exercise ID exists in the server-side database.
- * @param {string} id — exercise ID to validate
- * @returns {boolean}
- */
 function isValidExerciseId(id) {
   return Object.prototype.hasOwnProperty.call(EXERCISE_DB, id);
 }
 
 /**
- * Finds a biomechanically equivalent substitute exercise.
- *
- * Logic:
- * 1. Find the original exercise's primary muscles
- * 2. Find candidates that share at least one muscle AND are equipment-compatible
- * 3. Return the first match, or 'push_up' as the ultimate safe fallback
- *
- * @param {string} originalId — the exercise to replace
- * @param {string[]} availableEquipment — equipment the user has access to
- * @returns {string} — a valid exercise ID
+ * The equipment tags each training-profile choice gives access to. A pull-up
+ * bar and a rope are assumed everywhere. No choice yet means a full gym, as in
+ * the plan prompt.
  */
-function getSubstituteExerciseId(originalId, availableEquipment = []) {
-  const original = EXERCISE_DB[originalId];
+const EQUIPMENT_TAGS = {
+  full_gym: ["barbell", "dumbbells", "cables", "machines", "pull_up_bar", "jump_rope"],
+  dumbbells: ["dumbbells", "pull_up_bar", "jump_rope"],
+  bodyweight: ["pull_up_bar", "jump_rope"],
+};
 
-  if (!original) return 'push_up'; // Ultimate safe fallback
-
-  const candidates = Object.entries(EXERCISE_DB).filter(([id, ex]) => {
-    if (id === originalId) return false;
-
-    // Must share at least one target muscle
-    const sharesMuscle = ex.muscles.some(m => original.muscles.includes(m));
-
-    // Must be bodyweight OR use equipment the user has
-    const equipmentCompatible = ex.equipment.length === 0 ||
-      ex.equipment.every(e => availableEquipment.includes(e));
-
-    return sharesMuscle && equipmentCompatible;
-  });
-
-  return candidates.length > 0 ? candidates[0][0] : 'push_up';
+function equipmentTagsFor(equipment) {
+  return EQUIPMENT_TAGS[equipment] ?? EQUIPMENT_TAGS.full_gym;
 }
 
-module.exports = { EXERCISE_DB, isValidExerciseId, getSubstituteExerciseId };
+const usableWith = (equipmentTags) => (ex) => ex.equipment.every((tag) => equipmentTags.includes(tag));
+
+/** Every exercise id this equipment allows, in the order above (the list the AI picks from). */
+function allowedExerciseIds(equipmentTags) {
+  return Object.keys(EXERCISE_DB).filter((id) => usableWith(equipmentTags)(EXERCISE_DB[id]));
+}
+
+/**
+ * The first exercise that trains one of these muscles with this equipment,
+ * skipping the ids in `exclude`. Falls back to a push-up, which needs nothing.
+ */
+function findSimilarExercise(muscles, equipmentTags, exclude = []) {
+  const match = Object.entries(EXERCISE_DB).find(([id, ex]) =>
+    !exclude.includes(id) &&
+    usableWith(equipmentTags)(ex) &&
+    ex.muscles.some((m) => muscles.includes(m)),
+  );
+  return match ? match[0] : "push_up";
+}
+
+/** A different exercise for the same muscles, usable with this equipment. */
+function getSubstituteExerciseId(originalId, equipmentTags) {
+  return findSimilarExercise(EXERCISE_DB[originalId]?.muscles ?? [], equipmentTags, [originalId]);
+}
+
+/** Where an exercise goes in a session (1–4, see above); unknown ones sit with isolation work. */
+function exerciseOrderTier(id) {
+  return EXERCISE_DB[id]?.order ?? 3;
+}
+
+module.exports = {
+  EXERCISE_DB,
+  isValidExerciseId,
+  equipmentTagsFor,
+  allowedExerciseIds,
+  findSimilarExercise,
+  getSubstituteExerciseId,
+  exerciseOrderTier,
+};

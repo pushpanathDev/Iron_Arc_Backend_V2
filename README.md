@@ -1,253 +1,110 @@
-# 🏋️ Iron Arc Backend
+# Iron Arc Backend
 
-Backend server for the **Iron Arc** fitness app — Groq AI planning engine and Firebase Admin operations.
+The server behind the Iron Arc fitness app: workouts, body weight, custom
+exercises, achievements, and AI training plans with a plan coach. The app signs
+in with Firebase; this server checks that sign-in and keeps everything in
+Postgres. The Groq API key lives here, never in the app.
 
-## What This Server Does
+**Stack:** Node 22, Express 5, Prisma 7 with Postgres (Supabase), Firebase Admin
+(sign-in checks), Groq (AI), zod (request validation). Hosted on Render.
 
-| Job | Description |
-|-----|-------------|
-| **Groq API Proxy** | Secures the Groq API key — React Native app cannot hold it safely |
-| **AI Planning Engine** | Generates and recalibrates personalised fitness plans using Groq |
-| **Firebase Admin Ops** | Admin user deletion, user management (Firebase Admin SDK is server-only) |
-
----
-
-## Tech Stack
-
-- **Runtime:** Node.js 18+
-- **Framework:** Express.js
-- **AI:** Groq via `groq-sdk`
-- **Auth:** Firebase Admin SDK (server-side JWT verification)
-- **Database:** Cloud Firestore via Firebase Admin SDK
-- **Deployment:** Render.com (free tier)
-- **Keep-alive:** UptimeRobot pinging `GET /api/health` every 10 minutes
-
----
-
-## Quick Start
-
-### 1. Clone and Install
+## Run it locally
 
 ```bash
-git clone <your-repo-url>
-cd iron-arc-backend
-npm install
+npm install          # also generates the Prisma client
+cp .env.example .env # then fill it in (see the comments in the file)
+npm run dev          # restarts on every save; http://localhost:3000
 ```
 
-### 2. Configure Environment Variables
+Check it's up: `curl http://localhost:3000/api/health`. The response includes
+`"database": "connected"` once Postgres answers.
 
 ```bash
-cp .env.example .env
+npm test             # node --test: every *.test.js, no database or Firebase needed
+npm run lint         # ESLint
+npm run db:migrate   # create and apply a migration after changing prisma/schema.prisma
 ```
 
-Edit `.env` with your actual values:
-
-| Variable | Where to Get It |
-|----------|----------------|
-| `DATABASE_URL` | Supabase connection pooling URL |
-| `DIRECT_URL` | Supabase direct connection URL for Prisma migrations |
-| `GROQ_API_KEY` | [Groq Console](https://console.groq.com/keys) |
-| `FIREBASE_PROJECT_ID` | Firebase Console → Project Settings → General |
-| `FIREBASE_CLIENT_EMAIL` | Firebase Console → Project Settings → Service Accounts |
-| `FIREBASE_PRIVATE_KEY` | Firebase Console → Project Settings → Service Accounts → Generate New Private Key (copy the `private_key` field from the downloaded JSON) |
-| `ADMIN_SECRET_KEY` | Generate a long random string (e.g. `openssl rand -hex 32`) |
-
-> ⚠️ **FIREBASE_PRIVATE_KEY:** Wrap in double quotes in `.env`. The key contains `\n` characters that must be preserved.
-
-### 3. Run Development Server
-
-```bash
-npm run dev
-```
-
-Server starts at `http://localhost:3000`.
-
-### 4. Verify It's Working
-
-```bash
-curl http://localhost:3000/api/health
-```
-
-Expected response:
-```json
-{
-  "success": true,
-  "app": "Iron Arc Backend",
-  "status": "healthy",
-  "timestamp": "...",
-  "uptime": 5
-}
-```
-
----
-
-## API Endpoints
-
-### Health Check
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/health` | None | Keep-alive for UptimeRobot |
-
-### Planning Engine (requires Firebase ID token)
-| Method | Endpoint | Auth | Rate Limit | Description |
-|--------|----------|------|------------|-------------|
-| POST | `/api/plan/generate` | Bearer token | 5/hour | Generate a new AI fitness plan |
-| POST | `/api/plan/recalibrate` | Bearer token | 5/hour | Recalibrate existing plan based on performance |
-| POST | `/api/plan/substitute` | Bearer token | 30/min | Get a substitute for one exercise |
-
-### Admin (requires `x-admin-key` header)
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/admin/users` | Admin key | List all users (paginated) |
-| DELETE | `/api/admin/user/:userId` | Admin key | Completely delete a user |
-| POST | `/api/admin/user/:userId/disable` | Admin key | Soft-ban a user |
-
----
-
-## Authentication
-
-### For Plan Routes (React Native App)
-The app sends the Firebase ID token in the `Authorization` header:
-```
-Authorization: Bearer <firebase_id_token>
-```
-
-### For Admin Routes
-Admin requests use a static secret key:
-```
-x-admin-key: <ADMIN_SECRET_KEY>
-```
-
----
-
-## Firestore Data Structure
+## How a request flows
 
 ```
-Firestore
-├── users/{userId}/                    ← root user document
-│   ├── profile/data                   ← user profile (subcollection → fixed doc)
-│   ├── workouts/{workoutId}           ← workout sessions
-│   └── weights/{weightId}             ← weight log entries
-├── exerciseCatalog/v1                 ← remote exercise overrides
-└── adminUsers/allowlist               ← admin user IDs
+src/app.js                  security headers, JSON body (50 kb), routes, 404, error handler
+ └ routes/*Routes.js        one file per area: sign-in check, validation, then one service call
+    ├ middleware/           authMiddleware (Firebase token → req.user), validation (zod),
+    │                       rateLimiter, adminMiddleware (x-admin-key), errorHandler
+    └ services/*Service.js  the work: database reads and writes, AI calls
+       └ utils/             pure helpers: plan prompts, validation and diffs, exercise list,
+                            achievement maths, paging. No database, easy to test.
 ```
 
-> ⚠️ **Important:** Profile is at `users/{userId}/profile/data` — NOT `users/{userId}/profile`
+- **Signing in.** Every route except `/api/health` and `/api/admin` needs
+  `Authorization: Bearer <Firebase ID token>`. `authMiddleware` checks it and
+  creates or updates the user's row, so `req.user.dbUser` is always the
+  signed-in user. Writes also need a verified email.
+- **Errors.** Services throw `HttpError(status, message)` for anything the user
+  should see ("Plan not found.", "The coach couldn't answer right now…").
+  `errorHandler` turns every error into `{ success: false, message }`; anything
+  unexpected is a 500 that hides the details in production. Express 5 passes
+  errors from async routes along by itself, so routes have no try/catch.
+- **Achievements.** Saving a workout, a weight, a plan or a custom exercise
+  checks the badges for that event and returns any new ones as `newlyUnlocked`.
+  Badges are never taken back. The catalog is in `utils/achievementDefinitions.js`.
 
----
+## AI plans
 
-## Deployment to Render.com
+- **`services/aiClient.js`** is the only file that calls Groq: one prompt in, one
+  JSON object out, with retries (it waits as long as Groq asks after a 429).
+- **`utils/planPrompts.js`** has the prompts: generate, next week, swap, coach.
+- **`utils/exerciseDatabase.js`** is the list of exercises plans may use. Every
+  prompt offers only the exercises the user's equipment allows. It also decides
+  the order within a session and finds replacements.
+- **`utils/planValidator.js`** checks and tidies every plan the AI returns before
+  it's saved (made-up exercises replaced, sensible sets and rest, session order).
+- **The coach chat** is stored inside the plan (`planData._chatHistory`, the last
+  40 messages). Every plan change made by the AI is added there with a plain-words
+  list of what changed (`utils/planDiff.js`), so the app can show it later.
+- The AI only ever sees training facts, never the user's name or email
+  (`utils/anonymizer.js`).
+- Groq's free tier allows about 8,000 tokens a minute, so the coach and next
+  week send one compact week, not the whole plan (`utils/planChat.js`).
 
-### 1. Push to GitHub
-```bash
-git init
-git add .
-git commit -m "Initial Iron Arc Backend"
-git remote add origin <your-github-repo-url>
-git push -u origin main
-```
+## API
 
-### 2. Create Render Web Service
-1. Go to [render.com](https://render.com) → New → Web Service
-2. Connect your GitHub repo
-3. Settings:
-   - **Build Command:** `npm install`
-   - **Start Command:** `npm start`
-   - **Environment:** Node
-4. Add all environment variables from `.env` (use the Render dashboard)
+All responses are `{ success, data?, message? }`. Paged lists also return
+`total`, `page`, `limit`, `totalPages`.
 
-> 💡 The `render.yaml` file in this repo auto-configures most settings if you use Render Blueprints.
+| Area | Endpoints |
+|------|-----------|
+| Health | `GET /api/health` (public) |
+| User | `POST /api/user/sync` · `GET /api/user/profile` · `PATCH /api/user/profile` · `DELETE /api/user/account` (needs a sign-in from the last 5 minutes) |
+| Workouts | `POST /api/workouts` · `POST /api/workouts/batch` (a whole session, all or nothing) · `GET /api/workouts` · `GET`/`PATCH`/`DELETE /api/workouts/:id` |
+| Body weight | `POST /api/weights` (one entry per day) · `GET /api/weights` · `GET /api/weights/latest` · `DELETE /api/weights/:id` |
+| Custom exercises | `POST /api/exercises` · `GET /api/exercises` · `DELETE /api/exercises/:id` |
+| Achievements | `GET /api/achievements` |
+| Plans | `GET /api/plans` · `POST /api/plans/generate` · `GET /api/plans/:id` · `POST /api/plans/:id/recalibrate` (next week) · `POST /api/plans/:id/substitute` · `PATCH /api/plans/:id/name` · `PATCH /api/plans/:id/activate` · `DELETE /api/plans/:id` · `POST /api/plans/:id/chat` |
+| Admin | `GET /api/admin/users` · `DELETE /api/admin/user/:uid` · `POST /api/admin/user/:uid/disable` (header `x-admin-key`; `:uid` is the Firebase UID) |
 
-### 3. Set Up UptimeRobot (Prevent Cold Starts)
-1. Go to [uptimerobot.com](https://uptimerobot.com)
-2. Create account (free)
-3. Add Monitor:
-   - **Type:** HTTP(s)
-   - **URL:** `https://your-app-name.onrender.com/api/health`
-   - **Monitoring Interval:** 10 minutes
-4. This prevents Render's free tier from spinning down (which causes 30-60s cold starts)
+**Rate limits:** 200 requests per 15 minutes per user across the API; 5 plan
+generations or "next week"s per hour (`MAX_PLAN_GENERATIONS_PER_HOUR`); 30 coach
+messages per hour (`MAX_PLAN_CHATS_PER_HOUR`); 30 admin requests per 15 minutes
+per IP.
 
----
+## Database
 
-## React Native App Integration
+The schema is `prisma/schema.prisma`; every change is a migration in
+`prisma/migrations`, applied on deploy. Workouts and weights are soft-deleted
+(`deletedAt`); deleting a user removes everything of theirs. One rule lives only
+in SQL: a user has at most one active plan (`plans_one_active_per_user_idx`).
 
-Copy `services/backendApi.js` to your Iron Arc React Native app. It provides:
+## Deploying (Render)
 
-```javascript
-import {
-  generateWorkoutPlan,
-  recalibrateWeeklyPlan,
-  substituteExercise,
-  checkBackendHealth,
-} from './services/backendApi';
-```
+Pushing to the deployed branch builds and starts the service. In the Render
+dashboard:
 
-Update the `BASE_URL` in that file once your Render deployment is live.
+- **Build command:** `npm ci && npx prisma migrate deploy`
+- **Start command:** `node src/app.js`
+- **Health check path:** `/api/health`
+- **Environment:** the variables in `.env.example`, with `NODE_ENV=production`.
 
----
-
-## Edge Cases Handled
-
-| # | Edge Case | How It's Handled |
-|---|-----------|-----------------|
-| EC-01 | Groq returns fenced JSON | Stripped with regex |
-| EC-02 | Groq returns malformed JSON | Retry up to 3× with backoff |
-| EC-03 | Groq hallucinates exercise IDs | Substituted from server DB |
-| EC-04 | Groq API rate limit | Exponential backoff |
-| EC-05 | Firebase private key newlines | `replace(/\\n/g, '\n')` |
-| EC-06 | Nodemon re-init Firebase | `admin.apps.length` guard |
-| EC-07 | Wrong profile path | Explicit subcollection path |
-| EC-08 | Null height/weight | Graceful prompt handling |
-| EC-09 | New user (no history) | Conservative plan generation |
-| EC-10 | Expired JWT | 401 with re-login message |
-| EC-11 | Auth user already deleted | Treated as success |
-| EC-12 | Large subcollection (>500 docs) | Batched deletes (400/batch) |
-| EC-13 | Partial admin delete failure | 207 with detailed errors |
-| EC-14 | Plan generation spam | 5 requests/hour per user |
-| EC-15 | Oversized payload | 50kb body limit |
-| EC-16 | Render free tier sleep | UptimeRobot ping |
-| EC-17 | No active plan on recalibrate | 404 with clear message |
-| EC-18 | PII sent to Groq | Anonymizer strips all PII |
-
----
-
-## Project Structure
-
-```
-iron-arc-backend/
-├── src/
-│   ├── config/
-│   │   ├── firebase.js           ← Firebase Admin SDK init
-│   │   └── groq.js               ← Groq client init
-│   ├── middleware/
-│   │   ├── authMiddleware.js     ← Firebase JWT verification
-│   │   ├── adminMiddleware.js    ← Admin secret key check
-│   │   ├── rateLimiter.js        ← Per-user rate limiting
-│   │   └── errorHandler.js       ← Global error handler
-│   ├── routes/
-│   │   ├── planRoutes.js         ← Planning engine endpoints
-│   │   ├── adminRoutes.js        ← Admin user management endpoints
-│   │   └── healthRoutes.js       ← UptimeRobot keep-alive endpoint
-│   ├── services/
-│   │   ├── planningService.js    ← Planning engine orchestration
-│   │   ├── groqService.js        ← Groq prompt builders + retry logic
-│   │   └── adminService.js       ← Firebase Admin delete + list
-│   ├── utils/
-│   │   ├── exerciseDatabase.js   ← Server-side exercise list + validation
-│   │   ├── planValidator.js      ← Validates + sanitizes Groq JSON output
-│   │   └── anonymizer.js         ← Strips PII before sending to Groq
-│   └── app.js                    ← Express app entry point
-├── services/
-│   └── backendApi.js             ← React Native app integration file
-├── .env.example                  ← Environment template (committed)
-├── .gitignore
-├── package.json
-├── render.yaml                   ← Render.com deployment config
-└── README.md                     ← This file
-```
-
----
-
-## License
-
-MIT
+On the free plan the server sleeps after 15 idle minutes; an uptime monitor
+calling `/api/health` every 10 minutes keeps it awake.

@@ -216,28 +216,6 @@ function countPrExercises(workouts) {
   return count;
 }
 
-/**
- * Best lift per exercise: the heaviest set weight and the date it was first
- * reached. Exercises are grouped case/space-insensitively; the name returned
- * is the one used on that date. Bodyweight-only exercises (max 0) are omitted.
- */
-function computePersonalRecords(workouts) {
-  const best = new Map();
-  for (const w of workouts) {
-    const name = normalizeExercise(w.exercise);
-    if (!name) continue;
-    const top = Math.max(0, ...(w.sets || []).map((s) => Number(s.weight) || 0));
-    if (top <= 0) continue;
-
-    const date = toDateKey(w.date);
-    const current = best.get(name);
-    if (!current || top > current.maxWeight || (top === current.maxWeight && date < current.date)) {
-      best.set(name, { exerciseName: String(w.exercise).trim(), maxWeight: top, date });
-    }
-  }
-  return [...best.values()].sort((a, b) => a.exerciseName.localeCompare(b.exerciseName));
-}
-
 /** Canonical muscle groups trained at least once, in a fixed order. */
 function muscleGroupsCovered(workouts) {
   const found = new Set();
@@ -326,7 +304,6 @@ module.exports = {
   computeWeekly,
   countPrExercises,
   isPR,
-  computePersonalRecords,
   muscleGroupsCovered,
   computeComeback,
   computeWorkoutMetrics,

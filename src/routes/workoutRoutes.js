@@ -1,109 +1,44 @@
 const express = require("express");
-const router = express.Router();
 const { verifyFirebaseToken, requireEmailVerified } = require("../middleware/authMiddleware");
 const { validate, workoutSchema, workoutBatchSchema, workoutUpdateSchema } = require("../middleware/validation");
+const { pageFromQuery } = require("../utils/paging");
 const workoutService = require("../services/workoutService");
 
-const MAX_PAGE_SIZE = 1000;
-
+const router = express.Router();
 router.use(verifyFirebaseToken);
 
-router.post("/", requireEmailVerified, validate(workoutSchema), async (req, res, next) => {
-  try {
-    const userId = req.user.dbUser.id;
-    const { workout, newlyUnlocked } = await workoutService.createWorkout(userId, req.body);
-    res.status(201).json({ success: true, data: workout, newlyUnlocked });
-  } catch (error) {
-    next(error);
-  }
+router.post("/", requireEmailVerified, validate(workoutSchema), async (req, res) => {
+  const { workout, newlyUnlocked } = await workoutService.createWorkout(req.user.dbUser.id, req.body);
+  res.status(201).json({ success: true, data: workout, newlyUnlocked });
 });
 
-// POST /api/workouts/batch — a whole session in one transaction (all or nothing).
+// A whole logged session in one transaction: every entry is saved, or none.
 // Body: { date, entries: [{ exercise, category, notes?, sets }] }.
-router.post("/batch", requireEmailVerified, validate(workoutBatchSchema), async (req, res, next) => {
-  try {
-    const userId = req.user.dbUser.id;
-    const { workouts, newlyUnlocked } = await workoutService.createWorkoutBatch(userId, req.body);
-    res.status(201).json({ success: true, data: workouts, newlyUnlocked });
-  } catch (error) {
-    next(error);
-  }
+router.post("/batch", requireEmailVerified, validate(workoutBatchSchema), async (req, res) => {
+  const { workouts, newlyUnlocked } = await workoutService.createWorkoutBatch(req.user.dbUser.id, req.body);
+  res.status(201).json({ success: true, data: workouts, newlyUnlocked });
 });
 
-router.get("/", async (req, res, next) => {
-  try {
-    const userId = req.user.dbUser.id;
-    const { page, limit, category, startDate, endDate } = req.query;
-
-    const result = await workoutService.getWorkouts(userId, {
-      page: Math.max(parseInt(page) || 1, 1),
-      // Hard cap 1000 rows per page; clients page through totalPages for more.
-      limit: Math.min(Math.max(parseInt(limit) || 20, 1), MAX_PAGE_SIZE),
-      category,
-      startDate,
-      endDate,
-    });
-
-    res.json({ success: true, ...result });
-  } catch (error) {
-    next(error);
-  }
+// ?page=&limit=&category=&startDate=&endDate=, newest first.
+router.get("/", async (req, res) => {
+  const { category, startDate, endDate } = req.query;
+  const result = await workoutService.getWorkouts(req.user.dbUser.id, { ...pageFromQuery(req.query, 20), category, startDate, endDate });
+  res.json({ success: true, ...result });
 });
 
-// GET /api/workouts/stats — aggregates over the user's full history.
-// Must be registered before "/:id" so "stats" is not treated as an id.
-router.get("/stats", async (req, res, next) => {
-  try {
-    const stats = await workoutService.getWorkoutStats(req.user.dbUser.id);
-    res.json({ success: true, data: stats });
-  } catch (error) {
-    next(error);
-  }
+router.get("/:id", async (req, res) => {
+  const workout = await workoutService.getWorkout(req.user.dbUser.id, req.params.id);
+  res.json({ success: true, data: workout });
 });
 
-router.get("/:id", async (req, res, next) => {
-  try {
-    const userId = req.user.dbUser.id;
-    const workout = await workoutService.getWorkoutById(userId, req.params.id);
-
-    if (!workout) {
-      return res.status(404).json({ success: false, message: "Workout not found" });
-    }
-
-    res.json({ success: true, data: workout });
-  } catch (error) {
-    next(error);
-  }
+router.patch("/:id", requireEmailVerified, validate(workoutUpdateSchema), async (req, res) => {
+  const { workout, newlyUnlocked } = await workoutService.updateWorkout(req.user.dbUser.id, req.params.id, req.body);
+  res.json({ success: true, data: workout, newlyUnlocked });
 });
 
-router.patch("/:id", requireEmailVerified, validate(workoutUpdateSchema), async (req, res, next) => {
-  try {
-    const userId = req.user.dbUser.id;
-    const result = await workoutService.updateWorkout(userId, req.params.id, req.body);
-
-    if (!result) {
-      return res.status(404).json({ success: false, message: "Workout not found" });
-    }
-
-    res.json({ success: true, data: result.workout, newlyUnlocked: result.newlyUnlocked });
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.delete("/:id", requireEmailVerified, async (req, res, next) => {
-  try {
-    const userId = req.user.dbUser.id;
-    const result = await workoutService.deleteWorkout(userId, req.params.id);
-
-    if (!result) {
-      return res.status(404).json({ success: false, message: "Workout not found" });
-    }
-
-    res.json({ success: true, message: "Workout deleted", newlyUnlocked: result.newlyUnlocked });
-  } catch (error) {
-    next(error);
-  }
+router.delete("/:id", requireEmailVerified, async (req, res) => {
+  const { newlyUnlocked } = await workoutService.deleteWorkout(req.user.dbUser.id, req.params.id);
+  res.json({ success: true, message: "Workout deleted", newlyUnlocked });
 });
 
 module.exports = router;

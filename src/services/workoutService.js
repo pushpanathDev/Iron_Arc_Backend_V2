@@ -1,32 +1,29 @@
 const { prisma } = require("../config/database");
 const { evaluateAchievementsSafely } = require("./achievementService");
-const {
-  computeWorkoutMetrics,
-  computePersonalRecords,
-  muscleGroupsCovered,
-} = require("../utils/achievementEvaluator");
+const { HttpError } = require("../utils/httpError");
+const { dateRange, pageResult } = require("../utils/paging");
+
+const notFound = () => new HttpError(404, "Workout not found");
+const withSets = { sets: { orderBy: { setNumber: "asc" } } };
+
+/** Sets as rows, numbered from 1 in the order they were logged. */
+const setRows = (sets) => sets.map((set, i) => ({ setNumber: i + 1, reps: set.reps, weight: set.weight || 0 }));
+
+/** A new workout row with its sets, on `date`. */
+const newWorkout = (userId, date, entry) => ({
+  userId,
+  date: new Date(date),
+  exercise: entry.exercise,
+  category: entry.category,
+  notes: entry.notes || null,
+  sets: { create: setRows(entry.sets || []) },
+});
 
 async function createWorkout(userId, data) {
-  // Workout + sets are written atomically.
-  const workout = await prisma.$transaction((tx) =>
-    tx.workout.create({
-      data: {
-        userId,
-        date: new Date(data.date),
-        exercise: data.exercise,
-        category: data.category,
-        notes: data.notes || null,
-        sets: {
-          create: (data.sets || []).map((set, idx) => ({
-            setNumber: idx + 1,
-            reps: set.reps,
-            weight: set.weight || 0,
-          })),
-        },
-      },
-      include: { sets: true },
-    }),
-  );
+  const workout = await prisma.workout.create({ data: newWorkout(userId, data.date, data), include: withSets });
+
+  // After the save and best-effort: an evaluation failure is logged and never
+  // turns this successful save into an error response.
 
   // After commit and best-effort: an evaluation failure is logged and never
   // turns this successful save into an error response.
@@ -44,25 +41,7 @@ async function createWorkoutBatch(userId, { date, entries }) {
   const workouts = await prisma.$transaction(async (tx) => {
     const created = [];
     for (const entry of entries) {
-      created.push(
-        await tx.workout.create({
-          data: {
-            userId,
-            date: new Date(date),
-            exercise: entry.exercise,
-            category: entry.category,
-            notes: entry.notes || null,
-            sets: {
-              create: (entry.sets || []).map((set, idx) => ({
-                setNumber: idx + 1,
-                reps: set.reps,
-                weight: set.weight || 0,
-              })),
-            },
-          },
-          include: { sets: { orderBy: { setNumber: "asc" } } },
-        }),
-      );
+      created.push(await tx.workout.create({ data: newWorkout(userId, date, entry), include: withSets }));
     }
     return created;
   });
@@ -72,22 +51,12 @@ async function createWorkoutBatch(userId, { date, entries }) {
 }
 
 async function getWorkouts(userId, { page = 1, limit = 20, category, startDate, endDate } = {}) {
-  const where = {
-    userId,
-    deletedAt: null,
-  };
-
-  if (category) where.category = category;
-  if (startDate || endDate) {
-    where.date = {};
-    if (startDate) where.date.gte = new Date(startDate);
-    if (endDate) where.date.lte = new Date(endDate);
-  }
+  const where = { userId, deletedAt: null, category: category || undefined, date: dateRange(startDate, endDate) };
 
   const [workouts, total] = await Promise.all([
     prisma.workout.findMany({
       where,
-      include: { sets: { orderBy: { setNumber: "asc" } } },
+      include: withSets,
       orderBy: { date: "desc" },
       skip: (page - 1) * limit,
       take: limit,
@@ -95,15 +64,15 @@ async function getWorkouts(userId, { page = 1, limit = 20, category, startDate, 
     prisma.workout.count({ where }),
   ]);
 
-  return { workouts, total, page, limit, totalPages: Math.ceil(total / limit) };
+  return pageResult("workouts", workouts, total, { page, limit });
 }
 
-async function getWorkoutById(userId, workoutId) {
+async function getWorkout(userId, workoutId) {
   const workout = await prisma.workout.findFirst({
     where: { id: workoutId, userId, deletedAt: null },
-    include: { sets: { orderBy: { setNumber: "asc" } } },
+    include: withSets,
   });
-
+  if (!workout) throw notFound();
   return workout;
 }
 
@@ -115,13 +84,7 @@ async function updateWorkout(userId, workoutId, data) {
   if (data.notes !== undefined) updateData.notes = data.notes || null;
 
   if (data.sets) {
-    updateData.sets = {
-      create: data.sets.map((set, idx) => ({
-        setNumber: idx + 1,
-        reps: set.reps,
-        weight: set.weight || 0,
-      })),
-    };
+    updateData.sets = { create: setRows(data.sets) };
   }
 
   // Ownership check, set replacement and update in one transaction: if any
@@ -140,11 +103,11 @@ async function updateWorkout(userId, workoutId, data) {
     return tx.workout.update({
       where: { id: workoutId },
       data: updateData,
-      include: { sets: { orderBy: { setNumber: "asc" } } },
+      include: withSets,
     });
   });
 
-  if (!workout) return null;
+  if (!workout) throw notFound();
 
   // After commit and best-effort (see createWorkout).
   const newlyUnlocked = await evaluateAchievementsSafely(userId, "workout");
@@ -155,8 +118,7 @@ async function deleteWorkout(userId, workoutId) {
   const existing = await prisma.workout.findFirst({
     where: { id: workoutId, userId, deletedAt: null },
   });
-
-  if (!existing) return null;
+  if (!existing) throw notFound();
 
   const workout = await prisma.workout.update({
     where: { id: workoutId },
@@ -169,60 +131,11 @@ async function deleteWorkout(userId, workoutId) {
   return { workout, newlyUnlocked };
 }
 
-/**
- * Aggregate stats over the user's full (non-deleted) history, so the app
- * does not need every row to show streaks, PRs and totals. Streaks use the
- * same rules as achievements (distinct calendar dates; alive if the latest
- * is today or yesterday; any gap breaks it).
- */
-async function getWorkoutStats(userId) {
-  const workouts = await prisma.workout.findMany({
-    where: { userId, deletedAt: null },
-    select: {
-      date: true,
-      createdAt: true,
-      exercise: true,
-      category: true,
-      sets: { select: { reps: true, weight: true } },
-    },
-  });
-
-  const todayKey = new Date().toISOString().slice(0, 10);
-  const metrics = computeWorkoutMetrics(workouts, todayKey);
-
-  return {
-    totalWorkouts: metrics.workoutDays, // distinct workout dates
-    currentStreak: metrics.currentStreak,
-    longestStreak: metrics.longestStreak,
-    totalVolume: metrics.totalVolume, // kg
-    personalRecords: computePersonalRecords(workouts),
-    distinctExercises: metrics.distinctExercises,
-    muscleGroupsCovered: muscleGroupsCovered(workouts),
-  };
-}
-
-async function getRecentWorkouts(userId, days = 14) {
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-
-  return prisma.workout.findMany({
-    where: {
-      userId,
-      deletedAt: null,
-      date: { gte: since },
-    },
-    include: { sets: { orderBy: { setNumber: "asc" } } },
-    orderBy: { date: "desc" },
-  });
-}
-
 module.exports = {
   createWorkoutBatch,
   createWorkout,
   getWorkouts,
-  getWorkoutById,
+  getWorkout,
   updateWorkout,
   deleteWorkout,
-  getWorkoutStats,
-  getRecentWorkouts,
 };

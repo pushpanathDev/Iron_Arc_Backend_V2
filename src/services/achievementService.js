@@ -30,16 +30,16 @@ function sourcesFor(definitions) {
   return sources;
 }
 
+/**
+ * Plans ever generated: the append-only log (plans can be deleted), or the
+ * plans that exist if that's more (plans made before the log was added).
+ */
 async function countPlansGenerated(db, userId) {
-  const existingPlans = await db.plan.count({ where: { userId } });
-  try {
-    // Append-only log (plans can be deleted). Falls back to existing plans
-    // if the plan_generations migration has not been applied yet.
-    const generated = await db.planGeneration.count({ where: { userId } });
-    return Math.max(generated, existingPlans);
-  } catch {
-    return existingPlans;
-  }
+  const [generated, existingPlans] = await Promise.all([
+    db.planGeneration.count({ where: { userId } }),
+    db.plan.count({ where: { userId } }),
+  ]);
+  return Math.max(generated, existingPlans);
 }
 
 /** Days per week for the weekly streak: chosen training days, else the weekly goal (max 6). */
@@ -154,18 +154,26 @@ async function evaluateAchievementsSafely(userId, triggerEvent) {
  *
  * Also back-fills badges whose criteria are already met (e.g. for users with
  * data from before this catalog existed) — append-only, like any evaluation.
+ * The user's data is read once and used for both.
  */
 async function getAchievements(userId) {
-  await evaluateAchievementsSafely(userId, "all");
+  const metrics = await loadMetrics(prisma, userId, ACHIEVEMENT_DEFINITIONS);
+  const results = new Map(evaluateDefinitions(ACHIEVEMENT_DEFINITIONS, metrics).map((r) => [r.key, r]));
 
-  const [rows, metrics] = await Promise.all([
-    prisma.achievement.findMany({ where: { userId } }),
-    loadMetrics(prisma, userId, ACHIEVEMENT_DEFINITIONS),
-  ]);
+  const met = [...results.values()].filter((r) => r.earned);
+  if (met.length > 0) {
+    try {
+      await prisma.achievement.createMany({
+        data: met.map(({ key }) => ({ userId, badgeKey: key })),
+        skipDuplicates: true, // badges already earned keep their unlockedAt
+      });
+    } catch (error) {
+      console.warn(`[achievements] Back-fill failed for user ${userId}: ${error.message}`);
+    }
+  }
+
+  const rows = await prisma.achievement.findMany({ where: { userId } });
   const unlockedAtByKey = new Map(rows.map((r) => [r.badgeKey, r.unlockedAt]));
-  const results = new Map(
-    evaluateDefinitions(ACHIEVEMENT_DEFINITIONS, metrics).map((r) => [r.key, r]),
-  );
 
   return ACHIEVEMENT_DEFINITIONS.map((def) => {
     const unlockedAt = unlockedAtByKey.get(def.key) ?? null;

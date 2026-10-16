@@ -64,17 +64,15 @@ model Plan {
   userId      String   @map("user_id")
   name        String   @default("My Plan")
   criteria    Json?
+  /// The plan itself, plus the coach chat (_chatHistory) so no extra table is needed.
   planData    Json     @map("plan_data")
-  chatHistory Json?    @map("chat_history")
   isActive    Boolean  @default(false) @map("is_active")
   weekNumber  Int      @default(1) @map("week_number")
-  generatedAt DateTime @default(now()) @map("generated_at")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
   @@index([userId, isActive])
   @@map("plans")
 }
@@ -124,7 +122,6 @@ model BodyWeight {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, date])
-  @@index([userId, date])
   @@map("body_weights")
 }
 
@@ -137,7 +134,6 @@ model Achievement {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, badgeKey])
-  @@index([userId])
   @@map("achievements")
 }
 
@@ -151,6 +147,5 @@ model CustomExercise {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, category, name])
-  @@index([userId, category])
   @@map("custom_exercises")
 }

@@ -1,26 +1,30 @@
 const express = require("express");
-const router = express.Router();
 const { prisma } = require("../config/database");
+const { version } = require("../../package.json");
 
+const DB_CHECK_MS = 3000;
+
+const router = express.Router();
+
+// Public, no sign-in: the app's startup check and the uptime pinger. Always
+// 200 while the server runs; `database` says whether Postgres answered in time.
 router.get("/", async (req, res) => {
-  let dbStatus = "unknown";
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timeout")), DB_CHECK_MS);
+  });
+  const database = await Promise.race([prisma.$queryRaw`SELECT 1`, timeout]).then(
+    () => "connected",
+    () => "disconnected",
+  );
+  clearTimeout(timer);
 
-  try {
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("timeout")), 3000)
-    );
-    await Promise.race([prisma.$queryRaw`SELECT 1`, timeoutPromise]);
-    dbStatus = "connected";
-  } catch {
-    dbStatus = "disconnected";
-  }
-
-  res.status(200).json({
+  res.json({
     success: true,
     app: "Iron Arc Backend",
-    version: "2.0.0",
+    version,
     status: "healthy",
-    database: dbStatus,
+    database,
     timestamp: new Date().toISOString(),
     uptime: Math.floor(process.uptime()),
   });

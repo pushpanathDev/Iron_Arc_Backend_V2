@@ -1,6 +1,6 @@
-const { auth } = require('../config/firebase');
-const userService = require('../services/userService');
-const { userLimiter } = require('./rateLimiter');
+const { auth } = require("../config/firebase");
+const userService = require("../services/userService");
+const { userLimiter } = require("./rateLimiter");
 
 /**
  * Verifies the Firebase ID token from the React Native app.
@@ -20,34 +20,34 @@ function createTokenVerifier({ checkRevoked = false } = {}) {
   return async function verifyFirebaseToken(req, res, next) {
     const authHeader = req.headers.authorization;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).json({
         success: false,
-        message: 'Authentication required.',
+        message: "Authentication required.",
       });
     }
 
     // Only token verification failures are authentication errors (401).
     let decodedToken;
     try {
-      const idToken = authHeader.split('Bearer ')[1];
+      const idToken = authHeader.split("Bearer ")[1];
       decodedToken = await auth.verifyIdToken(idToken, checkRevoked);
     } catch (error) {
-      if (error.code === 'auth/id-token-expired') {
+      if (error.code === "auth/id-token-expired") {
         return res.status(401).json({
           success: false,
-          message: 'Session expired. Please log in again.',
+          message: "Session expired. Please log in again.",
         });
       }
-      if (error.code === 'auth/id-token-revoked') {
+      if (error.code === "auth/id-token-revoked") {
         return res.status(401).json({
           success: false,
-          message: 'Session revoked. Please log in again.',
+          message: "Session revoked. Please log in again.",
         });
       }
       return res.status(401).json({
         success: false,
-        message: 'Invalid authentication token.',
+        message: "Invalid authentication token.",
       });
     }
 
@@ -68,7 +68,7 @@ function createTokenVerifier({ checkRevoked = false } = {}) {
     if (dbUser.isActive === false) {
       return res.status(403).json({
         success: false,
-        message: 'This account is disabled.',
+        message: "This account is disabled.",
       });
     }
 
@@ -112,8 +112,8 @@ function requireRecentSignIn(req, res, next) {
   if (ageSeconds > recentSignInWindowSeconds) {
     return res.status(401).json({
       success: false,
-      code: 'REAUTHENTICATION_REQUIRED',
-      message: 'Recent sign-in required. Please re-authenticate and try again.',
+      code: "REAUTHENTICATION_REQUIRED",
+      message: "Recent sign-in required. Please re-authenticate and try again.",
     });
   }
 

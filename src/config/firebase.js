@@ -1,5 +1,11 @@
-const admin = require("firebase-admin");
+const { initializeApp, cert, applicationDefault } = require("firebase-admin/app");
+const { getAuth } = require("firebase-admin/auth");
 
+/**
+ * Firebase Admin credentials, from the first of these that is set:
+ * FIREBASE_SERVICE_ACCOUNT (JSON or base64 JSON), GOOGLE_APPLICATION_CREDENTIALS,
+ * or the three split FIREBASE_PROJECT_ID / CLIENT_EMAIL / PRIVATE_KEY variables.
+ */
 function createFirebaseCredential() {
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     const rawServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT.trim();
@@ -9,17 +15,17 @@ function createFirebaseCredential() {
         ? JSON.parse(rawServiceAccount)
         : JSON.parse(Buffer.from(rawServiceAccount, "base64").toString("utf8"));
 
-      return admin.credential.cert(serviceAccount);
+      return cert(serviceAccount);
     } catch (error) {
-      throw new Error(`Invalid FIREBASE_SERVICE_ACCOUNT value: ${error.message}`);
+      throw new Error(`Invalid FIREBASE_SERVICE_ACCOUNT value: ${error.message}`, { cause: error });
     }
   }
 
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    return admin.credential.applicationDefault();
+    return applicationDefault();
   }
 
-  return admin.credential.cert({
+  return cert({
     projectId: process.env.FIREBASE_PROJECT_ID,
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
     // Render and most CI/CD systems serialize the private key as a single
@@ -28,16 +34,9 @@ function createFirebaseCredential() {
   });
 }
 
-// Guard against re-initialization on Nodemon hot reload
-// Without this check, every file save crashes the server with
-// "Firebase app already exists" error
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: createFirebaseCredential(),
-  });
-}
+const app = initializeApp({ credential: createFirebaseCredential() });
 
-const db = admin.firestore();
-const auth = admin.auth();
+// Sign-in checks and account management (verify tokens, delete or disable users).
+const auth = getAuth(app);
 
-module.exports = { admin, db, auth };
+module.exports = { auth };

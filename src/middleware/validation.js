@@ -1,19 +1,24 @@
 const { z } = require("zod");
 
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD");
+
+// 1–50 sets; weight in kg, 0 for bodyweight.
+const setsSchema = z
+  .array(
+    z.object({
+      reps: z.number().int().min(0).max(9999),
+      weight: z.number().min(0).max(9999).optional().default(0),
+    })
+  )
+  .min(1)
+  .max(50);
+
 const workoutSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
+  date: isoDate,
   exercise: z.string().min(1).max(100),
   category: z.string().min(1).max(50),
   notes: z.string().max(500).optional().nullable(),
-  sets: z
-    .array(
-      z.object({
-        reps: z.number().int().min(0).max(9999),
-        weight: z.number().min(0).max(9999).optional().default(0),
-      })
-    )
-    .min(1)
-    .max(50),
+  sets: setsSchema,
 });
 
 // POST /api/workouts/batch: one session = several workouts on one date.
@@ -22,9 +27,9 @@ const workoutSchema = z.object({
 const MAX_BATCH_ENTRIES = 30;
 const workoutBatchSchema = z
   .object({
-    date: workoutSchema.shape.date,
+    date: isoDate,
     entries: z
-      .array(workoutSchema.extend({ date: workoutSchema.shape.date.optional() }))
+      .array(workoutSchema.extend({ date: isoDate.optional() }))
       .min(1)
       .max(MAX_BATCH_ENTRIES),
   })
@@ -36,27 +41,13 @@ const workoutBatchSchema = z
     });
   });
 
-const workoutUpdateSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  exercise: z.string().min(1).max(100).optional(),
-  category: z.string().min(1).max(50).optional(),
-  notes: z.string().max(500).optional().nullable(),
-  sets: z
-    .array(
-      z.object({
-        reps: z.number().int().min(0).max(9999),
-        weight: z.number().min(0).max(9999).optional().default(0),
-      })
-    )
-    .min(1)
-    .max(50)
-    .optional(),
-});
+// Any subset of a workout; sets, when given, replace all of the old ones.
+const workoutUpdateSchema = workoutSchema.partial();
 
 const bodyWeightSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
+  date: isoDate,
   weight: z.number().min(1).max(500),
-  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  weekStart: isoDate.optional().nullable(),
 });
 
 const profileUpdateSchema = z.object({
@@ -64,7 +55,6 @@ const profileUpdateSchema = z.object({
   avatarUrl: z.string().url().max(500).optional().nullable(),
   authProvider: z.string().max(50).nullable().optional(),
   height: z.number().min(50).max(300).optional().nullable(),
-  weight: z.number().min(1).max(500).optional().nullable(),
   age: z.number().int().min(10).max(120).optional().nullable(),
   fitnessGoal: z.string().max(200).optional().nullable(),
   weeklyGoal: z.number().int().min(1).max(7).optional(),
@@ -90,7 +80,17 @@ const customExerciseSchema = z.object({
 
 const substituteSchema = z.object({
   exerciseId: z.string().min(1).max(100),
-  reason: z.string().max(200).optional().default("user_request"),
+  // The app sends "user_request" when the user gave no reason.
+  reason: z.string().max(200).optional().transform((reason) => (reason && reason !== "user_request" ? reason : undefined)),
+});
+
+// Longer names are cut to 60 characters rather than rejected.
+const renamePlanSchema = z.object({
+  name: z.string().trim().min(1, "A non-empty name is required.").transform((name) => name.slice(0, 60)),
+});
+
+const planChatSchema = z.object({
+  message: z.string().trim().min(1, "Message is required.").max(1000, "Message is too long (max 1000 characters)."),
 });
 
 function validate(schema) {
@@ -127,4 +127,6 @@ module.exports = {
   profileUpdateSchema,
   customExerciseSchema,
   substituteSchema,
+  renamePlanSchema,
+  planChatSchema,
 };

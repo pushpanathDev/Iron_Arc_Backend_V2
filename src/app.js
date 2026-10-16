@@ -43,7 +43,6 @@ app.use(
 
 // ── Body Parsing ───────────────────────────────────────────────────────
 app.use(express.json({ limit: "50kb" }));
-app.use(express.urlencoded({ extended: true, limit: "50kb" }));
 
 // ── Routes ─────────────────────────────────────────────────────────────
 app.use("/api/health", healthRoutes);
@@ -52,8 +51,7 @@ app.use("/api/workouts", workoutRoutes);
 app.use("/api/weights", bodyWeightRoutes);
 app.use("/api/exercises", customExerciseRoutes);
 app.use("/api/achievements", achievementRoutes);
-app.use("/api/plan", planRoutes);   // legacy — kept for old clients
-app.use("/api/plans", planRoutes);  // new multi-plan API
+app.use("/api/plans", planRoutes);
 app.use("/api/admin", adminLimiter, adminRoutes);
 
 // ── 404 Catch-All ──────────────────────────────────────────────────────
