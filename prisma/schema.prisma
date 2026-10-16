@@ -73,7 +73,6 @@ model Plan {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
   @@index([userId, isActive])
   @@map("plans")
 }
@@ -123,7 +122,6 @@ model BodyWeight {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, date])
-  @@index([userId, date])
   @@map("body_weights")
 }
 
@@ -136,7 +134,6 @@ model Achievement {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, badgeKey])
-  @@index([userId])
   @@map("achievements")
 }
 
@@ -150,6 +147,5 @@ model CustomExercise {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, category, name])
-  @@index([userId, category])
   @@map("custom_exercises")
 }

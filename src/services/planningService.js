@@ -30,6 +30,13 @@ async function findOwnPlan(userId, planId) {
   return plan;
 }
 
+/** The same check without loading the plan itself (rename, activate, delete). */
+async function checkOwnPlan(userId, planId) {
+  const plan = await prisma.plan.findFirst({ where: { id: planId, userId }, select: { id: true, isActive: true } });
+  if (!plan) throw new HttpError(404, "Plan not found.");
+  return plan;
+}
+
 /**
  * The AI's JSON reply. If the AI can't answer (down, rate-limited, cut-off
  * reply), the user gets `unavailable` as a 503 and can simply try again.
@@ -89,12 +96,12 @@ function planNameFor(criteria, existingPlans) {
    Read
 ───────────────────────────────────────────────────────────── */
 async function listPlans(userId) {
-  const plans = await prisma.plan.findMany({
+  // The list doesn't need the plans themselves, so they aren't even read.
+  return prisma.plan.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },
+    omit: { planData: true },
   });
-  // The list doesn't need the plans themselves; leaving them out keeps it small.
-  return plans.map(({ planData, ...plan }) => plan);
 }
 
 const getPlan = findOwnPlan;
@@ -224,13 +231,13 @@ async function substituteExercise(user, planId, exerciseId, reason) {
    Rename, activate, delete
 ───────────────────────────────────────────────────────────── */
 async function renamePlan(userId, planId, name) {
-  await findOwnPlan(userId, planId);
+  await checkOwnPlan(userId, planId);
   return prisma.plan.update({ where: { id: planId }, data: { name } });
 }
 
 /** Makes this the active plan; the others become inactive. */
 async function activatePlan(userId, planId) {
-  await findOwnPlan(userId, planId);
+  await checkOwnPlan(userId, planId);
   return prisma.$transaction(async (tx) => {
     await tx.plan.updateMany({ where: { userId, isActive: true }, data: { isActive: false } });
     return tx.plan.update({ where: { id: planId }, data: { isActive: true } });
@@ -239,7 +246,7 @@ async function activatePlan(userId, planId) {
 
 /** If the deleted plan was active, the newest remaining plan takes over. */
 async function deletePlan(userId, planId) {
-  const plan = await findOwnPlan(userId, planId);
+  const plan = await checkOwnPlan(userId, planId);
   await prisma.$transaction(async (tx) => {
     await tx.plan.delete({ where: { id: planId } });
     if (!plan.isActive) return;
