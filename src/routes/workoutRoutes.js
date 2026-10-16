@@ -50,17 +50,6 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-// GET /api/workouts/stats — aggregates over the user's full history.
-// Must be registered before "/:id" so "stats" is not treated as an id.
-router.get("/stats", async (req, res, next) => {
-  try {
-    const stats = await workoutService.getWorkoutStats(req.user.dbUser.id);
-    res.json({ success: true, data: stats });
-  } catch (error) {
-    next(error);
-  }
-});
-
 router.get("/:id", async (req, res, next) => {
   try {
     const userId = req.user.dbUser.id;

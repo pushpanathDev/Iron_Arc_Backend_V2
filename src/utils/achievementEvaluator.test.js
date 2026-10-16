@@ -10,7 +10,6 @@ const {
   computeWeekStreaks,
   computeWeekly,
   countPrExercises,
-  computePersonalRecords,
   muscleGroupsCovered,
   computeComeback,
   computeWorkoutMetrics,
@@ -187,16 +186,8 @@ check("weekend days", m.weekendDays, 2);
 check("max workouts in a day", m.maxWorkoutsInDay, 2);
 check("current = longest streak", [m.currentStreak, m.longestStreak], [6, 6]);
 
-// ── Stats helpers (GET /api/workouts/stats) ─────────────────────────────────
-console.log("\n# Stats helpers");
-check("personal records: best lift per exercise with first date reached",
-  computePersonalRecords([
-    workout("2026-10-01", "Bench", "Chest", [{ reps: 5, weight: 60 }]),
-    workout("2026-10-03", "bench ", "Chest", [{ reps: 5, weight: 70 }]),
-    workout("2026-10-05", "Bench", "Chest", [{ reps: 3, weight: 70 }]),
-    workout("2026-10-02", "Pull Up", "Back", [{ reps: 8, weight: 0 }]),
-  ]),
-  [{ exerciseName: "bench", maxWeight: 70, date: "2026-10-03" }]);
+// ── Muscle groups ───────────────────────────────────────────────────────────
+console.log("\n# Muscle groups");
 check("muscle groups covered, fixed order, unmapped ignored",
   muscleGroupsCovered([
     workout("2026-10-01", "Squat", "Legs", []),

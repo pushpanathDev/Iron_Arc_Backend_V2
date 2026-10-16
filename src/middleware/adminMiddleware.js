@@ -1,12 +1,7 @@
 /**
- * Protects admin routes using a static secret key.
- * Iron Arc uses adminUsers/allowlist in Firestore to identify admins,
- * but for server-to-server admin API calls, a secret key is simpler and safer.
- *
- * Send as header: x-admin-key: <ADMIN_SECRET_KEY>
- *
- * Edge Case: Always return the same 403 regardless of WHY it failed.
- * Never reveal whether the key was missing vs wrong — same response both ways.
+ * Guards /api/admin with a static secret key, sent as the header
+ * x-admin-key: <ADMIN_SECRET_KEY>. A missing and a wrong key get the same
+ * 403, so the response never says which it was.
  */
 function verifyAdminKey(req, res, next) {
   const adminKey = req.headers['x-admin-key'];

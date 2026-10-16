@@ -37,16 +37,6 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-// GET /api/weights/stats — aggregates over all non-deleted entries.
-router.get("/stats", async (req, res, next) => {
-  try {
-    const stats = await bodyWeightService.getWeightStats(req.user.dbUser.id);
-    res.json({ success: true, data: stats });
-  } catch (error) {
-    next(error);
-  }
-});
-
 router.get("/latest", async (req, res, next) => {
   try {
     const userId = req.user.dbUser.id;

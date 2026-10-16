@@ -1,8 +1,8 @@
 const { isValidExerciseId, getSubstituteExerciseId, exerciseOrderTier } = require('./exerciseDatabase');
 
 /**
- * Validates and sanitizes the JSON plan returned by Groq before
- * it is saved to Firestore or returned to the Iron Arc React Native app.
+ * Validates and sanitizes the JSON plan returned by the AI before it is
+ * saved or sent to the app.
  *
  * Edge Cases:
  * - Malformed structure → throws INVALID_PLAN_STRUCTURE (caller handles retry)

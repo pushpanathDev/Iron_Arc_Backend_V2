@@ -46,15 +46,6 @@ async function upsertUserByFirebaseUid(firebaseUid, email) {
   }
 }
 
-async function getProfile(firebaseUid) {
-  const user = await prisma.user.findUnique({
-    where: { firebaseUid },
-  });
-
-  if (!user) return null;
-  return user;
-}
-
 async function updateProfile(firebaseUid, data) {
   const allowed = [
     "displayName",
@@ -160,7 +151,6 @@ async function deleteAccount(firebaseUid) {
 
 module.exports = {
   upsertUserByFirebaseUid,
-  getProfile,
   updateProfile,
   deleteAccount,
 };

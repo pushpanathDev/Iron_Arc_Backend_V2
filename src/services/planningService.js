@@ -87,7 +87,7 @@ async function getPlanById(firebaseUid, planId) {
 ───────────────────────────────────────────────────────────── */
 async function generatePlan(firebaseUid, criteria = {}) {
   const user = await fetchUserProfile(firebaseUid);
-  const anonymized = anonymizeIronArcProfile(user, user.id);
+  const anonymized = anonymizeIronArcProfile(user);
   const recentWorkouts = await fetchRecentWorkouts(user.id, 5);
 
   const prompt = buildGeneratePlanPrompt(anonymized, recentWorkouts, criteria);
@@ -157,7 +157,7 @@ async function recalibratePlan(firebaseUid, planId) {
   if (current >= weekCount) throw new Error("PLAN_FINISHED");
   const next = current + 1;
 
-  const anonymized = anonymizeIronArcProfile(user, user.id);
+  const anonymized = anonymizeIronArcProfile(user);
   const logged = await loggedLastWeek(user.id);
   const { _chatHistory: _omit, ...planForPrompt } = planData;
   const prompt = buildNextWeekPrompt(compactWeek(planForPrompt, current), compactWeek(planForPrompt, next), logged, anonymized, {
@@ -267,7 +267,7 @@ async function substituteExercise(firebaseUid, planId, exerciseId, reason) {
   });
   if (!plan) throw new Error("PLAN_NOT_FOUND");
 
-  const anonymized = anonymizeIronArcProfile(user, user.id);
+  const anonymized = anonymizeIronArcProfile(user);
   const prompt = buildSubstitutePrompt(exerciseId, reason, anonymized);
   let rawSubstitute;
   try {
@@ -401,7 +401,7 @@ async function chatWithPlan(firebaseUid, planId, userMessage) {
     ? existingPlanData._chatHistory
     : [];
 
-  const anonymized = anonymizeIronArcProfile(user, user.id);
+  const anonymized = anonymizeIronArcProfile(user);
 
   // Build prompt from plan data without the internal _chatHistory key
   const { _chatHistory: _omit, ...planDataForPrompt } = existingPlanData;

@@ -1,26 +1,9 @@
 /**
- * PRIVACY — strips all PII from Iron Arc user profile before sending to Groq.
- *
- * Fields that exist in Iron Arc's profile document that must NEVER reach Groq:
- * - email (direct PII)
- * - displayName (direct PII)
- * - userId (linkable to real identity)
- * - avatarUrl (linkable to real identity)
- * - authProvider (not relevant to planning)
- * - isEmailVerified (not relevant to planning)
- * - verificationSentAt (not relevant to planning)
- * - createdAt / updatedAt (not relevant to planning)
- *
- * Fields that ARE safe and useful for planning (passed through):
- * - age, height (nullable), weight (nullable), fitnessGoal, weeklyGoal
- * - training profile: experienceLevel, equipment, sessionMinutes, trainingDays
- *   (weekday numbers), avoidAreas (body areas to go easy on); all nullable/empty
- *
- * Edge Case: height and weight can be null in Iron Arc (they are optional
- * onboarding fields). The anonymizer must pass null through — the planning
- * service handles null gracefully in the prompt.
+ * The only profile fields the AI may see: training facts, never anything that
+ * identifies the person (name, email, ids, avatar). Height and weight can be
+ * empty; the prompts say "not provided".
  */
-function anonymizeIronArcProfile(userProfile, userId) {
+function anonymizeIronArcProfile(userProfile) {
   return {
     age: userProfile.age ?? null,
     height: userProfile.height ?? null,       // nullable — handle in prompt
@@ -32,8 +15,6 @@ function anonymizeIronArcProfile(userProfile, userId) {
     sessionMinutes: userProfile.sessionMinutes ?? null,
     trainingDays: Array.isArray(userProfile.trainingDays) ? userProfile.trainingDays : [],
     avoidAreas: Array.isArray(userProfile.avoidAreas) ? userProfile.avoidAreas : [],
-    // Opaque session reference — non-reversible, used for logging only
-    sessionRef: `arc_${Buffer.from(userId).toString('base64').slice(0, 8)}`,
   };
 }
 

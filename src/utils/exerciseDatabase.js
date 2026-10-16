@@ -1,16 +1,7 @@
 /**
- * Server-side exercise database for Iron Arc backend.
- *
- * Purpose:
- * 1. Validate exercise IDs returned by Groq (Groq may hallucinate names)
- * 2. Find biomechanically equivalent substitutes
- *
- * This is the backend safety net. It does NOT need to match exercises.ts
- * in the React Native app exactly — it just needs to cover common exercises
- * so Groq's output can be validated and corrected before reaching the app.
- *
- * Iron Arc's app can also override/extend exercises via exerciseCatalog/v1
- * in Firestore — that is a separate client-side concern, not this file's job.
+ * The exercises the AI planner may use. Used to check the ids the AI returns
+ * (it can invent names) and to find a similar exercise to swap in. The app has
+ * its own, larger exercise list; this one only has to cover what plans use.
  */
 const EXERCISE_DB = {
   // ── Push (Chest / Shoulders / Triceps) ──────────────────────────────

@@ -4,7 +4,7 @@ const { verifyAdminKey } = require('../middleware/adminMiddleware');
 const { deleteIronArcUser, listUsers, disableUser } = require('../services/adminService');
 
 // ── DELETE /api/admin/user/:userId ─────────────────────────────────────
-// Completely removes a user from Iron Arc — Auth + all Firestore data
+// Removes a user completely: their Firebase sign-in and all their data
 router.delete('/user/:userId', verifyAdminKey, async (req, res, next) => {
   try {
     const { userId } = req.params;

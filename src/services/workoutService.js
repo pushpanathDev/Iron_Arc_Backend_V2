@@ -1,10 +1,5 @@
 const { prisma } = require("../config/database");
 const { evaluateAchievementsSafely } = require("./achievementService");
-const {
-  computeWorkoutMetrics,
-  computePersonalRecords,
-  muscleGroupsCovered,
-} = require("../utils/achievementEvaluator");
 
 async function createWorkout(userId, data) {
   // Workout + sets are written atomically.
@@ -169,53 +164,6 @@ async function deleteWorkout(userId, workoutId) {
   return { workout, newlyUnlocked };
 }
 
-/**
- * Aggregate stats over the user's full (non-deleted) history, so the app
- * does not need every row to show streaks, PRs and totals. Streaks use the
- * same rules as achievements (distinct calendar dates; alive if the latest
- * is today or yesterday; any gap breaks it).
- */
-async function getWorkoutStats(userId) {
-  const workouts = await prisma.workout.findMany({
-    where: { userId, deletedAt: null },
-    select: {
-      date: true,
-      createdAt: true,
-      exercise: true,
-      category: true,
-      sets: { select: { reps: true, weight: true } },
-    },
-  });
-
-  const todayKey = new Date().toISOString().slice(0, 10);
-  const metrics = computeWorkoutMetrics(workouts, todayKey);
-
-  return {
-    totalWorkouts: metrics.workoutDays, // distinct workout dates
-    currentStreak: metrics.currentStreak,
-    longestStreak: metrics.longestStreak,
-    totalVolume: metrics.totalVolume, // kg
-    personalRecords: computePersonalRecords(workouts),
-    distinctExercises: metrics.distinctExercises,
-    muscleGroupsCovered: muscleGroupsCovered(workouts),
-  };
-}
-
-async function getRecentWorkouts(userId, days = 14) {
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-
-  return prisma.workout.findMany({
-    where: {
-      userId,
-      deletedAt: null,
-      date: { gte: since },
-    },
-    include: { sets: { orderBy: { setNumber: "asc" } } },
-    orderBy: { date: "desc" },
-  });
-}
-
 module.exports = {
   createWorkoutBatch,
   createWorkout,
@@ -223,6 +171,4 @@ module.exports = {
   getWorkoutById,
   updateWorkout,
   deleteWorkout,
-  getWorkoutStats,
-  getRecentWorkouts,
 };

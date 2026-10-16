@@ -89,28 +89,6 @@ async function deleteWeight(userId, weightId) {
   return { entry, newlyUnlocked };
 }
 
-/** Aggregate body-weight stats over all non-deleted entries (kg). */
-async function getWeightStats(userId) {
-  const entries = await prisma.bodyWeight.findMany({
-    where: { userId, deletedAt: null },
-    select: { date: true, weight: true },
-    orderBy: { date: "asc" },
-  });
-
-  const first = entries[0] ?? null;
-  const latest = entries[entries.length - 1] ?? null;
-  const dateKey = (d) => d.toISOString().slice(0, 10);
-
-  return {
-    latestWeight: latest ? latest.weight : null,
-    latestDate: latest ? dateKey(latest.date) : null,
-    firstWeight: first ? first.weight : null,
-    firstDate: first ? dateKey(first.date) : null,
-    totalEntries: entries.length,
-    distinctDays: new Set(entries.map((e) => dateKey(e.date))).size,
-  };
-}
-
 async function getLatestWeight(userId) {
   return prisma.bodyWeight.findFirst({
     where: { userId, deletedAt: null },
@@ -122,6 +100,5 @@ module.exports = {
   logWeight,
   getWeights,
   deleteWeight,
-  getWeightStats,
   getLatestWeight,
 };
