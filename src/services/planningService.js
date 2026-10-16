@@ -118,10 +118,18 @@ const getPlan = findOwnPlan;
 async function generatePlan(user, criteria = {}) {
   const settings = planSettings(user, criteria);
   const prompt = buildFirstWeekPrompt(anonymizeIronArcProfile(user), settings, await recentWorkouts(user.id));
-  // One week of sessions fits well inside 4,000 tokens; the prompt plus this cap stays under Groq's per-minute limit.
-  const reply = await askAi(prompt, { maxTokens: 4000, unavailable: "Couldn't build your plan right now. Please try again in a moment." });
+  const ask = () =>
+    // One week of sessions fits well inside 4,000 tokens; the prompt plus this cap stays under Groq's per-minute limit.
+    askAi(prompt, { maxTokens: 4000, unavailable: "Couldn't build your plan right now. Please try again in a moment." });
 
-  const days = assembleWeek(settings.schedule, reply?.days, settings.minutes);
+  // A reply that leaves out a whole session gets one more try before the user is asked to retry.
+  let reply = await ask();
+  let days = assembleWeek(settings.schedule, reply?.days, settings.minutes);
+  if (!days) {
+    console.warn("[generate] AI left out a session; asking once more");
+    reply = await ask();
+    days = assembleWeek(settings.schedule, reply?.days, settings.minutes);
+  }
   let planData;
   try {
     if (!days) throw new Error("the reply is missing a session");
@@ -290,6 +298,7 @@ async function chatWithPlan(user, planId, userMessage) {
   const prompt = buildPlanChatPrompt(compactWeek(planOnly, plan.weekNumber), history, userMessage, anonymizeIronArcProfile(user), {
     weeks: planLength(planOnly),
     weekNumber: plan.weekNumber,
+    logged: await loggedLastWeek(user.id),
     exerciseIds: allowedExerciseIds(equipment),
   });
   const reply = await askAi(prompt, {

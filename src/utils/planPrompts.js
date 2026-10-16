@@ -161,7 +161,10 @@ Return ONLY valid JSON:
  *   training day: { "d": "monday", "m": ["chest"], "min": 60,
  *                   "x": [{ "id": "bench_press", "n": "Barbell Bench Press", "s": 4, "r": "6-8", "rest": 90 }] }
  */
-/** meta: { weeks, weekNumber, exerciseIds } (the ids the user's equipment allows). */
+/**
+ * meta: { weeks, weekNumber, logged, exerciseIds }: logged is the last 7 days of
+ * workouts, one line each, so the coach can answer "how did my week go?".
+ */
 function buildPlanChatPrompt(weekDays, history = [], userMessage, profile = {}, meta = {}) {
   const recentHistory = history.slice(-6);
   const historyText = recentHistory.length > 0
@@ -181,6 +184,9 @@ function buildPlanChatPrompt(weekDays, history = [], userMessage, profile = {}, 
 PROFILE: ${profileSummary}
 PLAN: ${meta.weeks || 1} week(s); the user is on week ${meta.weekNumber || 1}. This is that week (short keys: d=day, t=rest, m=muscles, min=minutes, x=exercises with id, n=name, s=sets, r=reps, rest=seconds):
 ${JSON.stringify(weekDays)}
+
+LOGGED IN THE LAST 7 DAYS (date, exercise: weight kg × reps per set):
+${meta.logged?.length > 0 ? meta.logged.join("\n") : "Nothing logged."}
 
 RECENT CHAT:
 ${historyText}

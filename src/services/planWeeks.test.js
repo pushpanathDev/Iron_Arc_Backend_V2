@@ -10,7 +10,9 @@ function stub(relative, exports) {
 }
 
 let aiReply;
+let queuedReplies = []; // used first, in order, before aiReply
 let prompts;
+let workouts = [];
 stub("config/groq.js", {
   GROQ_MODEL: "test",
   groqClient: {
@@ -18,7 +20,8 @@ stub("config/groq.js", {
       completions: {
         create: async ({ messages }) => {
           prompts.push(messages[1].content);
-          return { choices: [{ finish_reason: "stop", message: { content: JSON.stringify(aiReply) } }], usage: {} };
+          const reply = queuedReplies.length > 0 ? queuedReplies.shift() : aiReply;
+          return { choices: [{ finish_reason: "stop", message: { content: JSON.stringify(reply) } }], usage: {} };
         },
       },
     },
@@ -37,7 +40,7 @@ const tx = {
 stub("config/database.js", {
   prisma: {
     $transaction: async (fn) => fn(tx),
-    workout: { findMany: async () => [] },
+    workout: { findMany: async () => workouts },
     plan: {
       findFirst: async () => storedPlan,
       update: async ({ data }) => (storedPlan = { ...storedPlan, ...data }),
@@ -55,6 +58,8 @@ const trainingDays = (week) => week.days.filter((d) => d.sessionType === "traini
 
 beforeEach(() => {
   prompts = [];
+  queuedReplies = [];
+  workouts = [];
   storedPlan = null;
 });
 
@@ -85,9 +90,18 @@ test("an automatic split is named after the split it used", async () => {
   assert.equal(plan.name, "Push Pull Legs");
 });
 
-test("a reply without the sessions is a 503 to try again", async () => {
+test("a reply missing a session is asked once more", async () => {
+  queuedReplies = [{ planExplanation: "x", days: [{ day: "monday", exercises: [ex("bench_press", "Barbell Bench Press")] }] }];
+  aiReply = { planExplanation: "x", days: ["monday", "tuesday", "wednesday"].map((day) => ({ day, exercises: [ex("squat", "Barbell Squat")] })) };
+  const { plan } = await generatePlan(user, { splitPreference: "push_pull_legs" });
+  assert.equal(prompts.length, 2);
+  assert.deepEqual(trainingDays(plan.planData.weeks[0]), ["mon", "tue", "wed", "thu", "fri", "sat"]);
+});
+
+test("two replies without the sessions are a 503 to try again", async () => {
   aiReply = { planExplanation: "x", days: [] };
   await assert.rejects(generatePlan(user), { status: 503 });
+  assert.equal(prompts.length, 2);
 });
 
 test("next week adds week 2 from week 1 and the log; the plan grows a week at a time", async () => {
@@ -116,4 +130,14 @@ test("week 4 is announced to the AI as a deload week", async () => {
 test("the last week of the plan is a 409, as before", async () => {
   storedPlan = { id: "plan-1", userId: "user-1", weekNumber: 8, criteria: {}, planData: { totalWeeks: 8, weeks: [{ week: 8, days: [] }] } };
   await assert.rejects(recalibratePlan(user, "plan-1"), { status: 409 });
+});
+
+test("the coach sees the last 7 days of the log", async () => {
+  aiReply = { planExplanation: "x", days: ["monday", "tuesday", "wednesday"].map((day) => ({ day, exercises: [ex("squat", "Barbell Squat")] })) };
+  await generatePlan(user, { splitPreference: "push_pull_legs" });
+  workouts = [{ date: new Date("2026-10-13T00:00:00Z"), exercise: "Barbell Squat", sets: [{ weight: 100, reps: 5 }, { weight: 100, reps: 4 }] }];
+  const { chatWithPlan } = require("./planningService");
+  aiReply = { message: "Solid week: squats nearly all there.", modifiedDays: null };
+  await chatWithPlan(user, "plan-1", "How did my week go?");
+  assert.match(prompts.at(-1), /LOGGED IN THE LAST 7 DAYS[^]*2026-10-13 Barbell Squat: 100×5, 100×4/);
 });
