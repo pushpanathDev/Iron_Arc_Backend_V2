@@ -1,7 +1,8 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { EXERCISE_DB, allowedExerciseIds, equipmentTagsFor } = require("./exerciseDatabase");
-const { buildGeneratePlanPrompt, buildSubstitutePrompt } = require("./planPrompts");
+const { buildFirstWeekPrompt, buildSubstitutePrompt } = require("./planPrompts");
+const { planSettings } = require("./planSchedule");
 const { chatOf, withoutChat, withChat } = require("./planChat");
 const { planHasExercise, exerciseNameIn, applySubstitution } = require("./planSwap");
 const { substituteSchema } = require("../middleware/validation");
@@ -18,9 +19,9 @@ test("each equipment choice gets only exercises it can do", () => {
 });
 
 test("the dumbbell plan prompt no longer offers barbell or machine exercises", () => {
-  const prompt = buildGeneratePlanPrompt({ fitnessGoal: "muscle", weeklyGoal: 3, equipment: "dumbbells" }, [], {});
-  // The list is the line after the "ALLOWED EXERCISE IDs" heading and its divider.
-  const pool = prompt.split("ALLOWED EXERCISE IDs")[1].split("\n")[2].split(", ");
+  const profile = { fitnessGoal: "muscle", weeklyGoal: 3, equipment: "dumbbells" };
+  const prompt = buildFirstWeekPrompt(profile, planSettings(profile));
+  const pool = prompt.split("Exercise ids only from: ")[1].split(".\n")[0].split(", ");
   assert.deepEqual(pool, idsFor("dumbbells"));
   for (const id of ["bicep_curl", "rdl", "leg_curl", "incline_press", "squat"]) assert.ok(!pool.includes(id), id);
 });

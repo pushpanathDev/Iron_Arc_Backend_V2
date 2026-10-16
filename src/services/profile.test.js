@@ -25,7 +25,8 @@ stub("config/firebase.js", { auth: {} });
 const { profileUpdateSchema } = require("../middleware/validation");
 const { updateProfile } = require("./userService");
 const { anonymizeIronArcProfile } = require("../utils/anonymizer");
-const { buildGeneratePlanPrompt } = require("../utils/planPrompts");
+const { buildFirstWeekPrompt } = require("../utils/planPrompts");
+const { planSettings } = require("../utils/planSchedule");
 
 const accepted = (body) => profileUpdateSchema.safeParse(body).success;
 
@@ -86,21 +87,19 @@ test("the plan prompt follows the training profile, with nothing that identifies
   });
   assert.deepEqual([profile.email, profile.displayName], [undefined, undefined]);
 
-  const prompt = buildGeneratePlanPrompt(profile, [], {});
-  assert.ok(prompt.includes("Generate exactly 3 training days"), "sessions = chosen days");
-  assert.ok(prompt.includes("ONLY on: Monday, Wednesday, Friday"));
-  assert.ok(prompt.includes("Session Length: 45 minutes"));
-  assert.ok(prompt.includes("Equipment Available: dumbbells"));
-  assert.ok(prompt.includes('"full body" split structure'), "split from 3 days");
-  assert.ok(prompt.includes("linear progression"), "progression from beginner");
-  assert.ok(prompt.includes("go easy on: knees"));
+  const prompt = buildFirstWeekPrompt(profile, planSettings(profile));
+  assert.ok(prompt.includes("- Monday: Full body") && prompt.includes("- Wednesday: Full body") && prompt.includes("- Friday: Full body"), "the chosen days, full body for 3 days");
+  assert.ok(!prompt.includes("- Tuesday"));
+  assert.ok(prompt.includes("Session length: 45 minutes"));
+  assert.ok(prompt.includes("Equipment: dumbbells"));
+  assert.ok(prompt.includes("Progression: linear"), "progression from beginner");
+  assert.ok(prompt.includes("Go easy on: knees"));
 
-  const chosen = buildGeneratePlanPrompt(profile, [], { sessionDuration: 90, splitPreference: "upper_lower" });
-  assert.ok(chosen.includes("Session Length: 90 minutes") && chosen.includes('"upper lower" split structure'), "the plan form overrides the profile");
+  const chosen = buildFirstWeekPrompt(profile, planSettings(profile, { sessionDuration: 90, splitPreference: "upper_lower" }));
+  assert.ok(chosen.includes("Session length: 90 minutes") && chosen.includes("- Monday: Upper") && chosen.includes("- Wednesday: Lower"), "the plan form overrides the profile");
 });
 
-test("older profiles (no weekdays) still get a plan prompt", () => {
-  const old = buildGeneratePlanPrompt(anonymizeIronArcProfile({ age: 30, fitnessGoal: "general", weeklyGoal: 4 }), [], {});
-  assert.ok(old.includes("Generate exactly 4 training days"));
-  assert.ok(!old.includes("ONLY on:"));
+test("older profiles (no weekdays) get their weekly goal, spread over the week", () => {
+  const old = anonymizeIronArcProfile({ age: 30, fitnessGoal: "general", weeklyGoal: 4 });
+  assert.deepEqual(planSettings(old).schedule.map((s) => s.day), ["monday", "tuesday", "thursday", "friday"]);
 });
