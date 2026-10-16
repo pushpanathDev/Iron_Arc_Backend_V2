@@ -12,7 +12,7 @@ function stub(relative, exports) {
 }
 
 const signedIn = (req, res, next) => {
-  req.user = { uid: "uid-1", emailVerified: true, dbUser: { id: "user-1" } };
+  req.user = { uid: "uid-1", emailVerified: true, dbUser: { id: "user-1", firebaseUid: "uid-1", equipment: "full_gym" } };
   next();
 };
 stub("middleware/authMiddleware.js", {
@@ -37,8 +37,7 @@ stub("config/groq.js", {
 const plan = { id: "plan-1", userId: "user-1", weekNumber: 1, criteria: {}, planData: { weeks: [{ week: 1, days: [{ day: "monday", sessionType: "training", exercises: [{ exerciseId: "squat", name: "Barbell Squat" }] }] }] } };
 stub("config/database.js", {
   prisma: {
-    user: { findUnique: async () => ({ id: "user-1", firebaseUid: "uid-1", equipment: "full_gym" }) },
-    plan: { findFirst: async () => plan },
+    plan: { findFirst: async ({ where }) => (where.id === plan.id && where.userId === plan.userId ? plan : null) },
     workout: { findMany: async () => [] },
   },
 });
@@ -48,9 +47,10 @@ stub("services/adminService.js", {
 
 process.env.ADMIN_SECRET_KEY = "test-key";
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "50kb" }));
 app.use("/api/plans", require("./planRoutes"));
 app.use("/api/admin", require("./adminRoutes"));
+app.use(require("../middleware/errorHandler").errorHandler);
 
 let server;
 let base;
@@ -73,6 +73,18 @@ test("an AI outage while generating is a 503 'try again', not a 500", { timeout:
   const res = await call("POST", "/api/plans/generate", { criteria: {} });
   assert.equal(res.status, 503);
   assert.match((await res.json()).message, /try again/i);
+});
+
+test("someone else's or a missing plan is a 404 from the shared error handler", async () => {
+  const res = await call("GET", "/api/plans/not-mine");
+  assert.equal(res.status, 404);
+  assert.equal((await res.json()).message, "Plan not found.");
+});
+
+test("a body that isn't JSON is a 400 that says so", async () => {
+  const res = await fetch(base + "/api/plans/plan-1/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{oops" });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).message, /valid JSON/);
 });
 
 test("swapping an exercise that isn't in the plan answers 422 without calling the AI", async () => {

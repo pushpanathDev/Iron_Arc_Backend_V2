@@ -1,5 +1,9 @@
 const { prisma } = require("../config/database");
 const { evaluateAchievementsSafely } = require("./achievementService");
+const { HttpError } = require("../utils/httpError");
+const { dateRange, pageResult } = require("../utils/paging");
+
+const notFound = () => new HttpError(404, "Workout not found");
 
 async function createWorkout(userId, data) {
   // Workout + sets are written atomically.
@@ -67,17 +71,7 @@ async function createWorkoutBatch(userId, { date, entries }) {
 }
 
 async function getWorkouts(userId, { page = 1, limit = 20, category, startDate, endDate } = {}) {
-  const where = {
-    userId,
-    deletedAt: null,
-  };
-
-  if (category) where.category = category;
-  if (startDate || endDate) {
-    where.date = {};
-    if (startDate) where.date.gte = new Date(startDate);
-    if (endDate) where.date.lte = new Date(endDate);
-  }
+  const where = { userId, deletedAt: null, category: category || undefined, date: dateRange(startDate, endDate) };
 
   const [workouts, total] = await Promise.all([
     prisma.workout.findMany({
@@ -90,15 +84,15 @@ async function getWorkouts(userId, { page = 1, limit = 20, category, startDate, 
     prisma.workout.count({ where }),
   ]);
 
-  return { workouts, total, page, limit, totalPages: Math.ceil(total / limit) };
+  return pageResult("workouts", workouts, total, { page, limit });
 }
 
-async function getWorkoutById(userId, workoutId) {
+async function getWorkout(userId, workoutId) {
   const workout = await prisma.workout.findFirst({
     where: { id: workoutId, userId, deletedAt: null },
     include: { sets: { orderBy: { setNumber: "asc" } } },
   });
-
+  if (!workout) throw notFound();
   return workout;
 }
 
@@ -139,7 +133,7 @@ async function updateWorkout(userId, workoutId, data) {
     });
   });
 
-  if (!workout) return null;
+  if (!workout) throw notFound();
 
   // After commit and best-effort (see createWorkout).
   const newlyUnlocked = await evaluateAchievementsSafely(userId, "workout");
@@ -150,8 +144,7 @@ async function deleteWorkout(userId, workoutId) {
   const existing = await prisma.workout.findFirst({
     where: { id: workoutId, userId, deletedAt: null },
   });
-
-  if (!existing) return null;
+  if (!existing) throw notFound();
 
   const workout = await prisma.workout.update({
     where: { id: workoutId },
@@ -168,7 +161,7 @@ module.exports = {
   createWorkoutBatch,
   createWorkout,
   getWorkouts,
-  getWorkoutById,
+  getWorkout,
   updateWorkout,
   deleteWorkout,
 };

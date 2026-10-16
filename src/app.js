@@ -43,7 +43,6 @@ app.use(
 
 // ── Body Parsing ───────────────────────────────────────────────────────
 app.use(express.json({ limit: "50kb" }));
-app.use(express.urlencoded({ extended: true, limit: "50kb" }));
 
 // ── Routes ─────────────────────────────────────────────────────────────
 app.use("/api/health", healthRoutes);

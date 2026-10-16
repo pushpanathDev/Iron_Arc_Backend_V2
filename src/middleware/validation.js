@@ -92,6 +92,15 @@ const substituteSchema = z.object({
   reason: z.string().max(200).optional().default("user_request"),
 });
 
+// Longer names are cut to 60 characters rather than rejected.
+const renamePlanSchema = z.object({
+  name: z.string().trim().min(1, "A non-empty name is required.").transform((name) => name.slice(0, 60)),
+});
+
+const planChatSchema = z.object({
+  message: z.string().trim().min(1, "Message is required.").max(1000, "Message is too long (max 1000 characters)."),
+});
+
 function validate(schema) {
   return (req, res, next) => {
     const result = schema.safeParse(req.body);
@@ -126,4 +135,6 @@ module.exports = {
   profileUpdateSchema,
   customExerciseSchema,
   substituteSchema,
+  renamePlanSchema,
+  planChatSchema,
 };

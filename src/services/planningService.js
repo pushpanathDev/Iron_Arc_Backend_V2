@@ -12,14 +12,34 @@ const {
   buildPlanChatPrompt,
 } = require("./groqService");
 const { evaluateAchievementsSafely } = require("./achievementService");
+const { HttpError } = require("../utils/httpError");
+
+/*
+ * Every function here gets the signed-in user's row (req.user.dbUser) or its
+ * id, and only ever touches that user's plans.
+ */
 
 /* ─────────────────────────────────────────────────────────────
    Helpers
 ───────────────────────────────────────────────────────────── */
-async function fetchUserProfile(firebaseUid) {
-  const user = await prisma.user.findUnique({ where: { firebaseUid } });
-  if (!user) throw new Error("PROFILE_NOT_FOUND");
-  return user;
+/** One of the user's plans, or a 404. */
+async function findOwnPlan(userId, planId) {
+  const plan = await prisma.plan.findFirst({ where: { id: planId, userId } });
+  if (!plan) throw new HttpError(404, "Plan not found.");
+  return plan;
+}
+
+/**
+ * The AI's JSON reply. If the AI can't answer (down, rate-limited, cut-off
+ * reply), the user gets `unavailable` as a 503 and can simply try again.
+ */
+async function askAi(prompt, { unavailable, maxTokens }) {
+  try {
+    return await callGroqWithRetry(prompt, 2, { maxTokens });
+  } catch (error) {
+    console.warn(`[AI] call failed: ${error.message}`);
+    throw new HttpError(503, unavailable);
+  }
 }
 
 async function fetchRecentWorkouts(userId, limit = 5) {
@@ -82,40 +102,31 @@ function stripPlanData(plan) {
 /* ─────────────────────────────────────────────────────────────
    Read operations
 ───────────────────────────────────────────────────────────── */
-async function listPlans(firebaseUid) {
-  const user = await fetchUserProfile(firebaseUid);
+async function listPlans(userId) {
   const plans = await prisma.plan.findMany({
-    where: { userId: user.id },
+    where: { userId },
     orderBy: { createdAt: "desc" },
   });
   return plans.map(stripPlanData);
 }
 
-async function getPlanById(firebaseUid, planId) {
-  const user = await fetchUserProfile(firebaseUid);
-  const plan = await prisma.plan.findFirst({
-    where: { id: planId, userId: user.id },
-  });
-  return plan ?? null;
-}
+const getPlan = findOwnPlan;
 
 /* ─────────────────────────────────────────────────────────────
    Generate
 ───────────────────────────────────────────────────────────── */
-async function generatePlan(firebaseUid, criteria = {}) {
-  const user = await fetchUserProfile(firebaseUid);
+async function generatePlan(user, criteria = {}) {
   const anonymized = anonymizeIronArcProfile(user);
   const recentWorkouts = await fetchRecentWorkouts(user.id, 5);
 
   const prompt = buildGeneratePlanPrompt(anonymized, recentWorkouts, criteria);
-  let rawPlan;
+  const rawPlan = await askAi(prompt, { unavailable: "Couldn't build your plan right now. Please try again in a moment." });
+  let validatedPlan;
   try {
-    rawPlan = await callGroqWithRetry(prompt);
-  } catch (error) {
-    console.warn(`[generate] AI call failed: ${error.message}`);
-    throw new Error("AI_UNAVAILABLE");
+    validatedPlan = validateAndSanitizePlan(rawPlan, equipmentOf(user, criteria));
+  } catch {
+    throw new HttpError(503, "Could not generate a valid plan. Please try again.");
   }
-  const validatedPlan = validateAndSanitizePlan(rawPlan, equipmentOf(user, criteria));
 
   const plan = await prisma.$transaction(async (tx) => {
     const existingCount = await tx.plan.count({ where: { userId: user.id } });
@@ -167,17 +178,15 @@ async function generatePlan(firebaseUid, criteria = {}) {
  * user logged in the last 7 days. Later weeks stay as planned. The change is
  * recorded in the coach chat so it can be found later.
  */
-async function recalibratePlan(firebaseUid, planId) {
-  const user = await fetchUserProfile(firebaseUid);
-  const plan = await prisma.plan.findFirst({
-    where: { id: planId, userId: user.id },
-  });
-  if (!plan) throw new Error("PLAN_NOT_FOUND");
+async function recalibratePlan(user, planId) {
+  const plan = await findOwnPlan(user.id, planId);
 
   const planData = plan.planData ?? {};
   const weekCount = Array.isArray(planData.weeks) ? planData.weeks.length : 1;
   const current = plan.weekNumber || 1;
-  if (current >= weekCount) throw new Error("PLAN_FINISHED");
+  if (current >= weekCount) {
+    throw new HttpError(409, "You're on the last week of this plan. Generate a new plan to keep progressing.");
+  }
   const next = current + 1;
 
   const anonymized = anonymizeIronArcProfile(user);
@@ -188,13 +197,10 @@ async function recalibratePlan(firebaseUid, planId) {
   });
   console.log(`[nextWeek] prompt ${prompt.length} chars · week ${current} → ${next} · ${logged.length} logged line(s)`);
 
-  let response;
-  try {
-    response = await callGroqWithRetry(prompt, 2, { maxTokens: 3000 });
-  } catch (error) {
-    console.warn(`[nextWeek] AI call failed: ${error.message}`);
-    throw new Error("AI_UNAVAILABLE");
-  }
+  const response = await askAi(prompt, {
+    maxTokens: 3000,
+    unavailable: "The coach couldn't prepare next week right now. Please try again in a moment.",
+  });
 
   let adjusted = Array.isArray(response?.modifiedDays) && response.modifiedDays.length > 0
     ? applyWeekChange(planForPrompt, next, response.modifiedDays, { onlyThisWeek: true })
@@ -226,14 +232,9 @@ async function recalibratePlan(firebaseUid, planId) {
    Substitute exercise — helpers
 ───────────────────────────────────────────────────────────── */
 
-/**
- * Walk the plan JSON and swap out one exercise by id/name.
- * Returns the modified plan clone plus a flag indicating whether
- * the exercise was actually found and replaced.
- */
+/** A copy of the plan with every match of one exercise (id or name) swapped out. */
 function applySubstitution(planData, oldExerciseId, substitute) {
   const updated = JSON.parse(JSON.stringify(planData));
-  let applied = false;
 
   const swapInList = (exercises) => {
     if (!Array.isArray(exercises)) return;
@@ -249,7 +250,6 @@ function applySubstitution(planData, oldExerciseId, substitute) {
           substitutedFrom: id || ex.name,
           substitutionReason: substitute.reason,
         };
-        applied = true;
       }
     }
   };
@@ -262,7 +262,7 @@ function applySubstitution(planData, oldExerciseId, substitute) {
     for (const day of updated.days ?? []) swapInList(day.exercises);
   }
 
-  return { updatedPlanData: updated, applied };
+  return updated;
 }
 
 /** The plan's display name for an exercise id (first match). */
@@ -279,23 +279,18 @@ function findExerciseName(planData, exerciseId) {
 /* ─────────────────────────────────────────────────────────────
    Substitute exercise
 ───────────────────────────────────────────────────────────── */
-async function substituteExercise(firebaseUid, planId, exerciseId, reason) {
-  const user = await fetchUserProfile(firebaseUid);
-  const plan = await prisma.plan.findFirst({
-    where: { id: planId, userId: user.id },
-  });
-  if (!plan) throw new Error("PLAN_NOT_FOUND");
-  if (!planHasExercise(plan.planData, exerciseId)) return { plan, substitute: null, applied: false };
+async function substituteExercise(user, planId, exerciseId, reason) {
+  const plan = await findOwnPlan(user.id, planId);
+  if (!planHasExercise(plan.planData, exerciseId)) {
+    throw new HttpError(422, `Exercise "${exerciseId}" was not found in this plan.`);
+  }
 
   const anonymized = anonymizeIronArcProfile(user);
   const prompt = buildSubstitutePrompt(exerciseId, reason, anonymized);
-  let rawSubstitute;
-  try {
-    rawSubstitute = await callGroqWithRetry(prompt, 2, { maxTokens: 400 });
-  } catch (error) {
-    console.warn(`[swap] AI call failed: ${error.message}`);
-    throw new Error("AI_UNAVAILABLE");
-  }
+  const rawSubstitute = await askAi(prompt, {
+    maxTokens: 400,
+    unavailable: "Couldn't find a replacement right now. Please try again in a moment.",
+  });
   const equipment = equipmentOf(user, plan.criteria);
   const fallbackExerciseId = getSubstituteExerciseId(exerciseId, equipment);
   const substituteExerciseId = isValidExerciseId(rawSubstitute?.substituteExerciseId)
@@ -308,13 +303,7 @@ async function substituteExercise(firebaseUid, planId, exerciseId, reason) {
     reason: rawSubstitute?.reason || reason || "Exercise substitution",
   };
 
-  // Apply the substitution to the actual plan data
-  const { updatedPlanData, applied } = applySubstitution(plan.planData, exerciseId, substitute);
-
-  if (!applied) {
-    return { plan, substitute, applied: false };
-  }
-
+  const updatedPlanData = applySubstitution(plan.planData, exerciseId, substitute);
   const validatedPlanData = validateAndSanitizePlan(updatedPlanData, equipment);
   const oldName = findExerciseName(plan.planData, exerciseId) || exerciseId;
   const changes = diffPlanWeek(plan.planData, validatedPlanData, plan.weekNumber);
@@ -327,29 +316,18 @@ async function substituteExercise(firebaseUid, planId, exerciseId, reason) {
     changes,
   };
 
-  const updatedPlan = await prisma.plan.update({
+  return prisma.plan.update({
     where: { id: planId },
     data: { planData: withHistory(validatedPlanData, [note]) },
   });
-
-  return {
-    plan: updatedPlan,
-    substitute,
-    applied,
-  };
 }
 
 /* ─────────────────────────────────────────────────────────────
    Rename
 ───────────────────────────────────────────────────────────── */
-async function renamePlan(firebaseUid, planId, name) {
-  const user = await fetchUserProfile(firebaseUid);
-  const plan = await prisma.plan.findFirst({
-    where: { id: planId, userId: user.id },
-  });
-  if (!plan) throw new Error("PLAN_NOT_FOUND");
-
-  return await prisma.plan.update({
+async function renamePlan(userId, planId, name) {
+  await findOwnPlan(userId, planId);
+  return prisma.plan.update({
     where: { id: planId },
     data: { name },
   });
@@ -358,16 +336,12 @@ async function renamePlan(firebaseUid, planId, name) {
 /* ─────────────────────────────────────────────────────────────
    Activate
 ───────────────────────────────────────────────────────────── */
-async function activatePlan(firebaseUid, planId) {
-  const user = await fetchUserProfile(firebaseUid);
-  const plan = await prisma.plan.findFirst({
-    where: { id: planId, userId: user.id },
-  });
-  if (!plan) throw new Error("PLAN_NOT_FOUND");
+async function activatePlan(userId, planId) {
+  await findOwnPlan(userId, planId);
 
   return prisma.$transaction(async (tx) => {
     await tx.plan.updateMany({
-      where: { userId: user.id, isActive: true },
+      where: { userId, isActive: true },
       data: { isActive: false },
     });
 
@@ -381,19 +355,15 @@ async function activatePlan(firebaseUid, planId) {
 /* ─────────────────────────────────────────────────────────────
    Delete
 ───────────────────────────────────────────────────────────── */
-async function deletePlan(firebaseUid, planId) {
-  const user = await fetchUserProfile(firebaseUid);
-  const plan = await prisma.plan.findFirst({
-    where: { id: planId, userId: user.id },
-  });
-  if (!plan) throw new Error("PLAN_NOT_FOUND");
+async function deletePlan(userId, planId) {
+  const plan = await findOwnPlan(userId, planId);
 
   await prisma.$transaction(async (tx) => {
     await tx.plan.delete({ where: { id: planId } });
 
     if (plan.isActive) {
       const next = await tx.plan.findFirst({
-        where: { userId: user.id },
+        where: { userId },
         orderBy: { createdAt: "desc" },
       });
       if (next) {
@@ -409,12 +379,8 @@ async function deletePlan(firebaseUid, planId) {
 /* ─────────────────────────────────────────────────────────────
    Chat with plan
 ───────────────────────────────────────────────────────────── */
-async function chatWithPlan(firebaseUid, planId, userMessage) {
-  const user = await fetchUserProfile(firebaseUid);
-  const plan = await prisma.plan.findFirst({
-    where: { id: planId, userId: user.id },
-  });
-  if (!plan) throw new Error("PLAN_NOT_FOUND");
+async function chatWithPlan(user, planId, userMessage) {
+  const plan = await findOwnPlan(user.id, planId);
 
   // Chat history is stored inside planData._chatHistory to avoid a schema migration
   const existingPlanData = plan.planData ?? {};
@@ -433,18 +399,10 @@ async function chatWithPlan(firebaseUid, planId, userMessage) {
     weekNumber: plan.weekNumber,
   });
   console.log(`[planChat] prompt ${prompt.length} chars · plan ${weeks} week(s) · history ${history.length} messages`);
-  let response;
-  try {
-    response = await callGroqWithRetry(prompt, 2, { maxTokens: 3000 });
-    console.log(
-      `[planChat] AI reply keys: ${Object.keys(response || {}).join(", ") || "(none)"} · modifiedDays: ${
-        Array.isArray(response?.modifiedDays) ? `${response.modifiedDays.length} day(s)` : "null"
-      }`,
-    );
-  } catch (error) {
-    console.warn(`[planChat] AI call failed: ${error.message}`);
-    throw new Error("AI_UNAVAILABLE");
-  }
+  const response = await askAi(prompt, {
+    maxTokens: 3000,
+    unavailable: "The coach couldn't answer right now. Please try again in a moment.",
+  });
 
   let aiMessage = response?.message ?? "I've processed your request.";
   // The changed week, applied to the current and later weeks (older replies may still send a full plan).
@@ -504,7 +462,7 @@ module.exports = {
   recalibratePlan,
   substituteExercise,
   listPlans,
-  getPlanById,
+  getPlan,
   renamePlan,
   activatePlan,
   deletePlan,

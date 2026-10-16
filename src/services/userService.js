@@ -85,7 +85,7 @@ const EDITABLE_FIELDS = [
   "avoidAreas",
 ];
 
-async function updateProfile(firebaseUid, data) {
+async function updateProfile(userId, data) {
   const changes = {};
   for (const key of EDITABLE_FIELDS) {
     if (data[key] !== undefined) changes[key] = data[key];
@@ -96,7 +96,7 @@ async function updateProfile(firebaseUid, data) {
     if (changes.trainingDays.length > 0) changes.weeklyGoal = changes.trainingDays.length;
   }
 
-  return prisma.user.update({ where: { firebaseUid }, data: changes });
+  return prisma.user.update({ where: { id: userId }, data: changes });
 }
 
 async function deleteAccount(firebaseUid) {

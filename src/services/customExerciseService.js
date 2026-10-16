@@ -1,14 +1,17 @@
 const { prisma } = require("../config/database");
 const { evaluateAchievementsSafely } = require("./achievementService");
+const { HttpError } = require("../utils/httpError");
 
 async function createExercise(userId, data) {
-  const exercise = await prisma.customExercise.create({
-    data: {
-      userId,
-      category: data.category,
-      name: data.name,
-    },
-  });
+  let exercise;
+  try {
+    exercise = await prisma.customExercise.create({
+      data: { userId, category: data.category, name: data.name },
+    });
+  } catch (error) {
+    if (error.code === "P2002") throw new HttpError(409, "Exercise already exists in this category");
+    throw error;
+  }
 
   const newlyUnlocked = await evaluateAchievementsSafely(userId, "custom_exercise");
   return { exercise, newlyUnlocked };
@@ -29,10 +32,9 @@ async function deleteExercise(userId, exerciseId) {
     where: { id: exerciseId, userId },
   });
 
-  if (!existing) return null;
+  if (!existing) throw new HttpError(404, "Exercise not found");
 
   await prisma.customExercise.delete({ where: { id: exerciseId } });
-  return existing;
 }
 
 module.exports = {

@@ -1,5 +1,4 @@
 const express = require("express");
-const router = express.Router();
 const {
   verifyFirebaseToken,
   verifyFirebaseTokenWithRevocation,
@@ -9,44 +8,28 @@ const {
 const { validate, profileUpdateSchema } = require("../middleware/validation");
 const userService = require("../services/userService");
 
+const router = express.Router();
+// Signing in also creates or updates the user's row (see authMiddleware).
 router.use(verifyFirebaseToken);
 
-router.post("/sync", requireEmailVerified, async (req, res, next) => {
-  try {
-    const user = await userService.upsertUserByFirebaseUid(req.user.uid, req.user.email);
-    req.user.dbUser = user;
-    res.json({ success: true, data: user });
-  } catch (error) {
-    next(error);
-  }
+// Called by the app after sign-in; the row is already up to date by now.
+router.post("/sync", requireEmailVerified, (req, res) => {
+  res.json({ success: true, data: req.user.dbUser });
 });
 
-router.get("/profile", async (req, res, next) => {
-  try {
-    res.json({ success: true, data: req.user.dbUser });
-  } catch (error) {
-    next(error);
-  }
+router.get("/profile", (req, res) => {
+  res.json({ success: true, data: req.user.dbUser });
 });
 
-router.patch("/profile", requireEmailVerified, validate(profileUpdateSchema), async (req, res, next) => {
-  try {
-    const updated = await userService.updateProfile(req.user.uid, req.body);
-    res.json({ success: true, data: updated });
-  } catch (error) {
-    next(error);
-  }
+router.patch("/profile", requireEmailVerified, validate(profileUpdateSchema), async (req, res) => {
+  const updated = await userService.updateProfile(req.user.dbUser.id, req.body);
+  res.json({ success: true, data: updated });
 });
 
-router.delete("/account", verifyFirebaseTokenWithRevocation, requireRecentSignIn, requireEmailVerified, async (req, res, next) => {
-  try {
-    console.log(`[user] Account deletion requested for ${req.user.uid}`);
-    await userService.deleteAccount(req.user.uid);
-    console.log(`[user] Account deletion completed for ${req.user.uid}`);
-    res.json({ success: true, message: "Account deleted" });
-  } catch (error) {
-    next(error);
-  }
+// Needs a sign-in from the last 5 minutes and a token that hasn't been revoked.
+router.delete("/account", verifyFirebaseTokenWithRevocation, requireRecentSignIn, requireEmailVerified, async (req, res) => {
+  await userService.deleteAccount(req.user.uid);
+  res.json({ success: true, message: "Account deleted" });
 });
 
 module.exports = router;

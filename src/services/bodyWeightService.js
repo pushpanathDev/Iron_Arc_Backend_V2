@@ -1,5 +1,7 @@
 const { prisma } = require("../config/database");
 const { evaluateAchievementsSafely } = require("./achievementService");
+const { HttpError } = require("../utils/httpError");
+const { dateRange, pageResult } = require("../utils/paging");
 
 async function logWeight(userId, data) {
   const date = new Date(data.date);
@@ -44,16 +46,7 @@ async function syncProfileWeight(tx, userId) {
 }
 
 async function getWeights(userId, { page = 1, limit = 30, startDate, endDate } = {}) {
-  const where = {
-    userId,
-    deletedAt: null,
-  };
-
-  if (startDate || endDate) {
-    where.date = {};
-    if (startDate) where.date.gte = new Date(startDate);
-    if (endDate) where.date.lte = new Date(endDate);
-  }
+  const where = { userId, deletedAt: null, date: dateRange(startDate, endDate) };
 
   const [weights, total] = await Promise.all([
     prisma.bodyWeight.findMany({
@@ -65,15 +58,14 @@ async function getWeights(userId, { page = 1, limit = 30, startDate, endDate } =
     prisma.bodyWeight.count({ where }),
   ]);
 
-  return { weights, total, page, limit, totalPages: Math.ceil(total / limit) };
+  return pageResult("weights", weights, total, { page, limit });
 }
 
 async function deleteWeight(userId, weightId) {
   const existing = await prisma.bodyWeight.findFirst({
     where: { id: weightId, userId, deletedAt: null },
   });
-
-  if (!existing) return null;
+  if (!existing) throw new HttpError(404, "Weight entry not found");
 
   const entry = await prisma.$transaction(async (tx) => {
     const updated = await tx.bodyWeight.update({
@@ -90,10 +82,12 @@ async function deleteWeight(userId, weightId) {
 }
 
 async function getLatestWeight(userId) {
-  return prisma.bodyWeight.findFirst({
+  const entry = await prisma.bodyWeight.findFirst({
     where: { userId, deletedAt: null },
     orderBy: { date: "desc" },
   });
+  if (!entry) throw new HttpError(404, "No weight entries found");
+  return entry;
 }
 
 module.exports = {
