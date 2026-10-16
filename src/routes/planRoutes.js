@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { verifyFirebaseToken, requireEmailVerified } = require('../middleware/authMiddleware');
-const { generalLimiter, planGenerationLimiter, planChatLimiter } = require('../middleware/rateLimiter');
+const { planGenerationLimiter, planChatLimiter } = require('../middleware/rateLimiter');
 const { validate, substituteSchema } = require('../middleware/validation');
 const {
   generatePlan,
@@ -14,8 +14,6 @@ const {
   deletePlan,
   chatWithPlan,
 } = require('../services/planningService');
-
-router.use(generalLimiter);
 
 /* ── GET /api/plans ─────────────────────────────────────────────────────
    List all plans for the authenticated user (newest first)
@@ -43,6 +41,9 @@ router.post('/generate', verifyFirebaseToken, requireEmailVerified, planGenerati
     }
     if (error.message === 'INVALID_PLAN_STRUCTURE') {
       return res.status(503).json({ success: false, message: 'Could not generate a valid plan. Please try again.' });
+    }
+    if (error.message === 'AI_UNAVAILABLE') {
+      return res.status(503).json({ success: false, message: "Couldn't build your plan right now. Please try again in a moment." });
     }
     next(error);
   }

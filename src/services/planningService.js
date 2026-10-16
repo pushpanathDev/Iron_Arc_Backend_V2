@@ -3,7 +3,7 @@ const { anonymizeIronArcProfile } = require("../utils/anonymizer");
 const { validateAndSanitizePlan } = require("../utils/planValidator");
 const { compactWeek, applyWeekChange } = require("../utils/planChat");
 const { diffPlanWeek } = require("../utils/planDiff");
-const { EXERCISE_DB, isValidExerciseId, getSubstituteExerciseId } = require("../utils/exerciseDatabase");
+const { EXERCISE_DB, isValidExerciseId, equipmentTagsFor, getSubstituteExerciseId } = require("../utils/exerciseDatabase");
 const {
   callGroqWithRetry,
   buildGeneratePlanPrompt,
@@ -56,6 +56,23 @@ async function loggedLastWeek(userId) {
   });
 }
 
+/** Equipment a plan may use: what it was built with, else the user's profile. */
+function equipmentOf(user, criteria) {
+  return equipmentTagsFor(criteria?.equipment ?? user.equipment);
+}
+
+/** Whether a plan exercise is the one asked for, by id or name in any letter case. */
+function isExercise(ex, wanted) {
+  const target = String(wanted).toLowerCase();
+  return [ex.exerciseId, ex.id, ex.name].some((v) => typeof v === "string" && v.toLowerCase() === target);
+}
+
+function planHasExercise(planData, wanted) {
+  return (planData?.weeks ?? []).some((week) =>
+    (week.days ?? []).some((day) => (day.exercises ?? []).some((ex) => isExercise(ex, wanted))),
+  );
+}
+
 /** Strip planData from plan record for list views — keeps payload small */
 function stripPlanData(plan) {
   const { planData, ...meta } = plan;
@@ -91,8 +108,14 @@ async function generatePlan(firebaseUid, criteria = {}) {
   const recentWorkouts = await fetchRecentWorkouts(user.id, 5);
 
   const prompt = buildGeneratePlanPrompt(anonymized, recentWorkouts, criteria);
-  const rawPlan = await callGroqWithRetry(prompt);
-  const validatedPlan = validateAndSanitizePlan(rawPlan, []);
+  let rawPlan;
+  try {
+    rawPlan = await callGroqWithRetry(prompt);
+  } catch (error) {
+    console.warn(`[generate] AI call failed: ${error.message}`);
+    throw new Error("AI_UNAVAILABLE");
+  }
+  const validatedPlan = validateAndSanitizePlan(rawPlan, equipmentOf(user, criteria));
 
   const plan = await prisma.$transaction(async (tx) => {
     const existingCount = await tx.plan.count({ where: { userId: user.id } });
@@ -177,11 +200,12 @@ async function recalibratePlan(firebaseUid, planId) {
     ? applyWeekChange(planForPrompt, next, response.modifiedDays, { onlyThisWeek: true })
     : planForPrompt;
   let message = response?.message || `Week ${next} is ready.`;
+  const equipment = equipmentOf(user, plan.criteria);
   try {
-    adjusted = validateAndSanitizePlan(adjusted, []);
+    adjusted = validateAndSanitizePlan(adjusted, equipment);
   } catch {
     console.warn("[nextWeek] AI returned an invalid week; keeping next week as planned");
-    adjusted = validateAndSanitizePlan(planForPrompt, []);
+    adjusted = validateAndSanitizePlan(planForPrompt, equipment);
     message = `Week ${next} is ready, as planned. (I couldn't adjust it from your log this time.)`;
   }
 
@@ -216,12 +240,7 @@ function applySubstitution(planData, oldExerciseId, substitute) {
     for (let i = 0; i < exercises.length; i++) {
       const ex = exercises[i];
       const id = ex.exerciseId ?? ex.id ?? "";
-      if (
-        id === oldExerciseId ||
-        ex.name === oldExerciseId ||
-        (typeof id === "string" && typeof oldExerciseId === "string" &&
-          id.toLowerCase() === oldExerciseId.toLowerCase())
-      ) {
+      if (isExercise(ex, oldExerciseId)) {
         exercises[i] = {
           ...ex,
           exerciseId: substitute.substituteExerciseId,
@@ -266,6 +285,7 @@ async function substituteExercise(firebaseUid, planId, exerciseId, reason) {
     where: { id: planId, userId: user.id },
   });
   if (!plan) throw new Error("PLAN_NOT_FOUND");
+  if (!planHasExercise(plan.planData, exerciseId)) return { plan, substitute: null, applied: false };
 
   const anonymized = anonymizeIronArcProfile(user);
   const prompt = buildSubstitutePrompt(exerciseId, reason, anonymized);
@@ -276,7 +296,8 @@ async function substituteExercise(firebaseUid, planId, exerciseId, reason) {
     console.warn(`[swap] AI call failed: ${error.message}`);
     throw new Error("AI_UNAVAILABLE");
   }
-  const fallbackExerciseId = getSubstituteExerciseId(exerciseId, []);
+  const equipment = equipmentOf(user, plan.criteria);
+  const fallbackExerciseId = getSubstituteExerciseId(exerciseId, equipment);
   const substituteExerciseId = isValidExerciseId(rawSubstitute?.substituteExerciseId)
     ? rawSubstitute.substituteExerciseId
     : fallbackExerciseId;
@@ -294,7 +315,7 @@ async function substituteExercise(firebaseUid, planId, exerciseId, reason) {
     return { plan, substitute, applied: false };
   }
 
-  const validatedPlanData = validateAndSanitizePlan(updatedPlanData, []);
+  const validatedPlanData = validateAndSanitizePlan(updatedPlanData, equipment);
   const oldName = findExerciseName(plan.planData, exerciseId) || exerciseId;
   const changes = diffPlanWeek(plan.planData, validatedPlanData, plan.weekNumber);
   const note = {
@@ -402,6 +423,7 @@ async function chatWithPlan(firebaseUid, planId, userMessage) {
     : [];
 
   const anonymized = anonymizeIronArcProfile(user);
+  const equipment = equipmentOf(user, plan.criteria);
 
   // Build prompt from plan data without the internal _chatHistory key
   const { _chatHistory: _omit, ...planDataForPrompt } = existingPlanData;
@@ -434,7 +456,7 @@ async function chatWithPlan(firebaseUid, planId, userMessage) {
   // current plan and say the change couldn't be applied.
   if (modifiedPlan) {
     try {
-      validateAndSanitizePlan(modifiedPlan, []);
+      validateAndSanitizePlan(modifiedPlan, equipment);
     } catch {
       console.warn(`[planChat] AI returned an invalid plan (keys: ${Object.keys(modifiedPlan).join(", ")}); keeping the current one`);
       modifiedPlan = null;
@@ -444,7 +466,7 @@ async function chatWithPlan(firebaseUid, planId, userMessage) {
 
   // Merge: use AI-modified plan structure if provided, then embed history
   const basePlanData = modifiedPlan ?? existingPlanData;
-  const validatedPlanData = validateAndSanitizePlan(basePlanData, []);
+  const validatedPlanData = validateAndSanitizePlan(basePlanData, equipment);
   const changes = modifiedPlan ? diffPlanWeek(planDataForPrompt, validatedPlanData, plan.weekNumber) : undefined;
 
   // Append to chat history (keep the last 40 entries to avoid bloat)

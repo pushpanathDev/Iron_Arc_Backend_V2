@@ -18,11 +18,7 @@ router.delete('/user/:userId', verifyAdminKey, async (req, res, next) => {
 
     const result = await deleteIronArcUser(userId);
 
-    const fullyDeleted = result.authDeleted &&
-      result.workoutsDeleted &&
-      result.weightsDeleted &&
-      result.profileDeleted &&
-      result.rootDocDeleted;
+    const fullyDeleted = result.postgresDeleted && result.authDeleted;
 
     if (!fullyDeleted) {
       return res.status(207).json({

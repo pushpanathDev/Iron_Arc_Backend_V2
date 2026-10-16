@@ -64,7 +64,6 @@ const profileUpdateSchema = z.object({
   avatarUrl: z.string().url().max(500).optional().nullable(),
   authProvider: z.string().max(50).nullable().optional(),
   height: z.number().min(50).max(300).optional().nullable(),
-  weight: z.number().min(1).max(500).optional().nullable(),
   age: z.number().int().min(10).max(120).optional().nullable(),
   fitnessGoal: z.string().max(200).optional().nullable(),
   weeklyGoal: z.number().int().min(1).max(7).optional(),

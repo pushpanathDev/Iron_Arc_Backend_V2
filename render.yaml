@@ -29,5 +29,3 @@ services:
         sync: false
       - key: MAX_PLAN_GENERATIONS_PER_HOUR
         value: "5"
-      - key: MAX_REQUESTS_PER_MINUTE
-        value: "30"

@@ -57,36 +57,36 @@ function isValidExerciseId(id) {
 }
 
 /**
- * Finds a biomechanically equivalent substitute exercise.
- *
- * Logic:
- * 1. Find the original exercise's primary muscles
- * 2. Find candidates that share at least one muscle AND are equipment-compatible
- * 3. Return the first match, or 'push_up' as the ultimate safe fallback
- *
- * @param {string} originalId — the exercise to replace
- * @param {string[]} availableEquipment — equipment the user has access to
- * @returns {string} — a valid exercise ID
+ * The equipment tags each training-profile choice gives access to (the
+ * "equipment" lists above). A pull-up bar and a rope are assumed everywhere.
+ * No choice yet means a full gym, as in the plan prompt.
  */
-function getSubstituteExerciseId(originalId, availableEquipment = []) {
-  const original = EXERCISE_DB[originalId];
+const EQUIPMENT_TAGS = {
+  full_gym: ['barbell', 'dumbbells', 'cables', 'machines', 'pull_up_bar', 'jump_rope'],
+  dumbbells: ['dumbbells', 'pull_up_bar', 'jump_rope'],
+  bodyweight: ['pull_up_bar', 'jump_rope'],
+};
 
-  if (!original) return 'push_up'; // Ultimate safe fallback
+function equipmentTagsFor(equipment) {
+  return EQUIPMENT_TAGS[equipment] ?? EQUIPMENT_TAGS.full_gym;
+}
 
-  const candidates = Object.entries(EXERCISE_DB).filter(([id, ex]) => {
-    if (id === originalId) return false;
+/**
+ * The first exercise that trains one of these muscles with this equipment,
+ * skipping the ids in `exclude`. Falls back to a push-up, which needs nothing.
+ */
+function findSimilarExercise(muscles, equipmentTags, exclude = []) {
+  const match = Object.entries(EXERCISE_DB).find(([id, ex]) =>
+    !exclude.includes(id) &&
+    ex.equipment.every((tag) => equipmentTags.includes(tag)) &&
+    ex.muscles.some((m) => muscles.includes(m)),
+  );
+  return match ? match[0] : 'push_up';
+}
 
-    // Must share at least one target muscle
-    const sharesMuscle = ex.muscles.some(m => original.muscles.includes(m));
-
-    // Must be bodyweight OR use equipment the user has
-    const equipmentCompatible = ex.equipment.length === 0 ||
-      ex.equipment.every(e => availableEquipment.includes(e));
-
-    return sharesMuscle && equipmentCompatible;
-  });
-
-  return candidates.length > 0 ? candidates[0][0] : 'push_up';
+/** A different exercise for the same muscles, usable with this equipment. */
+function getSubstituteExerciseId(originalId, equipmentTags) {
+  return findSimilarExercise(EXERCISE_DB[originalId]?.muscles ?? [], equipmentTags, [originalId]);
 }
 
 /*
@@ -106,4 +106,11 @@ function exerciseOrderTier(id) {
   return ORDER_OF.get(id) ?? 3;
 }
 
-module.exports = { EXERCISE_DB, isValidExerciseId, getSubstituteExerciseId, exerciseOrderTier };
+module.exports = {
+  EXERCISE_DB,
+  isValidExerciseId,
+  equipmentTagsFor,
+  findSimilarExercise,
+  getSubstituteExerciseId,
+  exerciseOrderTier,
+};

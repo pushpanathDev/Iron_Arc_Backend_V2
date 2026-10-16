@@ -1,16 +1,5 @@
 const rateLimit = require('express-rate-limit');
 
-// ── General Limiter ────────────────────────────────────────────────────
-// Applied to all routes — prevents general API abuse
-const generalLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute window
-  max: parseInt(process.env.MAX_REQUESTS_PER_MINUTE) || 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, message: 'Too many requests. Please slow down.' },
-  keyGenerator: (req) => req.user?.uid || req.ip,
-});
-
 // ── Plan Generation Limiter ────────────────────────────────────────────
 // Strict limiter — Groq calls are expensive, limit plan generation per user
 const planGenerationLimiter = rateLimit({
@@ -63,4 +52,4 @@ const planChatLimiter = rateLimit({
   keyGenerator: (req) => req.user?.uid || req.ip,
 });
 
-module.exports = { generalLimiter, planGenerationLimiter, planChatLimiter, userLimiter, adminLimiter };
+module.exports = { planGenerationLimiter, planChatLimiter, userLimiter, adminLimiter };

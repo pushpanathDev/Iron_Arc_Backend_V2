@@ -23,7 +23,7 @@ const tx = {
   user: { findUnique: async () => ({ id: "user-1" }), update: async ({ data }) => { lastUpdate = data; return { id: "user-1", ...data }; } },
   bodyWeight: { findFirst: async () => ({ weight: 78 }), upsert: async () => ({}) },
 };
-stub("config/database.js", { prisma: { $transaction: async (fn) => fn(tx) } });
+stub("config/database.js", { prisma: { user: tx.user } });
 stub("config/firebase.js", { auth: {} });
 // The plan prompt builder is pure; the Groq client config (API key) is never touched.
 stub("config/groq.js", { groqClient: {}, GROQ_MODEL: "test", GROQ_TIMEOUT_MS: 1 });

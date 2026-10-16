@@ -14,7 +14,7 @@
     "db:migrate:prod": "npx prisma migrate deploy",
     "db:studio": "npx prisma studio",
     "postinstall": "npx prisma generate",
-    "test": "node src/utils/achievementEvaluator.test.js && node src/routes/workoutBatch.test.js && node src/services/targetWeight.test.js && node src/services/trainingProfile.test.js && node src/utils/planChat.test.js && node src/utils/planDiff.test.js"
+    "test": "node --test"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",

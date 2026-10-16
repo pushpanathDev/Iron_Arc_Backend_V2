@@ -33,7 +33,7 @@ const tx = {
     upsert: async () => ({}),
   },
 };
-stub("config/database.js", { prisma: { $transaction: async (fn) => fn(tx) } });
+stub("config/database.js", { prisma: { user: tx.user } });
 stub("config/firebase.js", { auth: {} });
 
 const { profileUpdateSchema } = require("../middleware/validation");
@@ -51,7 +51,9 @@ async function main() {
   console.log("\n# updateProfile");
   await updateProfile("fb-1", { targetWeight: 72.5 });
   check("saves the target", lastUpdate.targetWeight, 72.5);
-  check("body weight still comes from the latest entry", lastUpdate.weight, 78.4);
+  check("profile saves never write body weight (it mirrors the weight log)", "weight" in lastUpdate, false);
+  await updateProfile("fb-1", { weight: 90 });
+  check("a weight sent by an older app is ignored", "weight" in lastUpdate, false);
   await updateProfile("fb-1", { targetWeight: null });
   check("null clears it", lastUpdate.targetWeight, null);
   await updateProfile("fb-1", { displayName: "Sam" });

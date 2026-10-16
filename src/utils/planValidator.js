@@ -1,4 +1,4 @@
-const { isValidExerciseId, getSubstituteExerciseId, exerciseOrderTier } = require('./exerciseDatabase');
+const { EXERCISE_DB, isValidExerciseId, equipmentTagsFor, findSimilarExercise, exerciseOrderTier } = require('./exerciseDatabase');
 
 /**
  * Validates and sanitizes the JSON plan returned by the AI before it is
@@ -6,14 +6,15 @@ const { isValidExerciseId, getSubstituteExerciseId, exerciseOrderTier } = requir
  *
  * Edge Cases:
  * - Malformed structure → throws INVALID_PLAN_STRUCTURE (caller handles retry)
- * - Hallucinated exercise IDs → silently substituted with valid equivalents
+ * - Made-up exercise IDs → replaced with a known exercise for the same day's
+ *   muscles and the user's equipment (named after the replacement)
  * - Negative sets/reps → corrected to minimum safe values
  * - More than 8 exercises in one session → trimmed (volume safety)
  * - Missing optional fields → safe defaults applied
  * - Exercises in training order: big compound lifts first, isolation and core last
  *   (stable, so the AI's order is kept within each tier)
  */
-function validateAndSanitizePlan(rawPlan, availableEquipment = []) {
+function validateAndSanitizePlan(rawPlan, equipmentTags = equipmentTagsFor(null)) {
   if (!rawPlan || !rawPlan.weeks || !Array.isArray(rawPlan.weeks)) {
     throw new Error('INVALID_PLAN_STRUCTURE');
   }
@@ -39,6 +40,7 @@ function validateAndSanitizePlan(rawPlan, availableEquipment = []) {
         }
 
         // Training days get validated
+        const dayIds = (day.exercises || []).map((ex) => ex.exerciseId);
         return {
           day: day.day || 'training',
           sessionType: day.sessionType || 'training',
@@ -47,14 +49,14 @@ function validateAndSanitizePlan(rawPlan, availableEquipment = []) {
           exercises: (day.exercises || [])
             .slice(0, 8) // Max 8 exercises per session (volume safety)
             .map(ex => {
-              // Validate exercise ID — substitute if hallucinated
-              const exerciseId = isValidExerciseId(ex.exerciseId)
+              const known = isValidExerciseId(ex.exerciseId);
+              const exerciseId = known
                 ? ex.exerciseId
-                : getSubstituteExerciseId(ex.exerciseId, availableEquipment);
+                : findSimilarExercise(day.targetMuscles || [], equipmentTags, dayIds);
 
               return {
                 exerciseId,
-                name: ex.name || exerciseId,
+                name: known ? ex.name || EXERCISE_DB[exerciseId].name : EXERCISE_DB[exerciseId].name,
                 sets: Math.max(1, parseInt(ex.sets) || 3),
                 reps: ex.reps || '8-12',
                 restSeconds: Math.max(30, parseInt(ex.restSeconds) || 60),
