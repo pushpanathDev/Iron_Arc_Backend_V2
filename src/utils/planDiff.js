@@ -3,16 +3,11 @@
  * chat messages so the "Plan updated" card survives reopening the chat.
  * Mirrors diffPlanWeek in the app (utils/planData.ts).
  */
-const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+const { WEEKDAYS, currentWeekIndex } = require('./planChat');
+
 const DAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-function weekDays(planData, weekNumber) {
-  if (Array.isArray(planData?.weeks) && planData.weeks.length > 0) {
-    const index = Math.min(Math.max((weekNumber || 1) - 1, 0), planData.weeks.length - 1);
-    return planData.weeks[index]?.days ?? [];
-  }
-  return Array.isArray(planData?.days) ? planData.days : [];
-}
+const weekDays = (planData, weekNumber) => planData?.weeks?.[currentWeekIndex(planData, weekNumber)]?.days ?? [];
 
 const byWeekday = (days) => WEEKDAYS.map((k) => days.find((d) => (d.day || '').toLowerCase() === k) ?? null);
 const isTraining = (d) => !!d && d.sessionType !== 'rest' && (d.exercises?.length ?? 0) > 0;

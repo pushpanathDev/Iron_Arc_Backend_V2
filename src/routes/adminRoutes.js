@@ -1,6 +1,7 @@
 const express = require("express");
 const { verifyAdminKey } = require("../middleware/adminMiddleware");
-const { deleteIronArcUser, listUsers, disableUser } = require("../services/adminService");
+const { listUsers, disableUser } = require("../services/adminService");
+const { deleteUserEverywhere } = require("../services/userService");
 
 // Server-to-server only: every route needs the x-admin-key header.
 // :uid is the user's Firebase UID.
@@ -10,7 +11,7 @@ router.use(verifyAdminKey);
 // Removes a user completely: their Firebase sign-in and all their data.
 // 207 when one of the two failed; `data.errors` says which.
 router.delete("/user/:uid", async (req, res) => {
-  const result = await deleteIronArcUser(req.params.uid);
+  const result = await deleteUserEverywhere(req.params.uid);
   if (!(result.postgresDeleted && result.authDeleted)) {
     return res.status(207).json({ success: false, message: "Partial deletion. Review errors for remaining data.", data: result });
   }

@@ -26,12 +26,11 @@ const tx = {
 stub("config/database.js", { prisma: { user: tx.user } });
 stub("config/firebase.js", { auth: {} });
 // The plan prompt builder is pure; the Groq client config (API key) is never touched.
-stub("config/groq.js", { groqClient: {}, GROQ_MODEL: "test", GROQ_TIMEOUT_MS: 1 });
 
 const { profileUpdateSchema } = require("../middleware/validation");
 const { updateProfile } = require("./userService");
 const { anonymizeIronArcProfile } = require("../utils/anonymizer");
-const { buildGeneratePlanPrompt } = require("./groqService");
+const { buildGeneratePlanPrompt } = require("../utils/planPrompts");
 
 const ok = (body) => profileUpdateSchema.safeParse(body).success;
 

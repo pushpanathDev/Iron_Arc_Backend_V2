@@ -99,35 +99,49 @@ async function updateProfile(userId, data) {
   return prisma.user.update({ where: { id: userId }, data: changes });
 }
 
-async function deleteAccount(firebaseUid) {
-  console.log(`[userService] Starting account deletion for ${firebaseUid}`);
+/**
+ * Deletes a user's data (every table cascades from the user row) and their
+ * Firebase sign-in. Already gone counts as deleted. Tries both and reports
+ * what failed, so an admin can see a partial deletion.
+ */
+async function deleteUserEverywhere(firebaseUid) {
+  const result = { postgresDeleted: false, authDeleted: false, errors: [] };
 
   try {
-    await auth.revokeRefreshTokens(firebaseUid);
-    console.log(`[userService] Refresh tokens revoked for ${firebaseUid}`);
+    await prisma.user.delete({ where: { firebaseUid } });
+    result.postgresDeleted = true;
   } catch (error) {
-    console.warn(`Could not revoke tokens for ${firebaseUid}:`, error.message);
-  }
-
-  try {
-    await prisma.user.delete({
-      where: { firebaseUid },
-    });
-    console.log(`[userService] Postgres user deleted for ${firebaseUid}`);
-  } catch (error) {
-    if (error.code !== "P2025") throw error;
+    if (error.code === "P2025") result.postgresDeleted = true;
+    else result.errors.push(`postgres: ${error.message}`);
   }
 
   try {
     await auth.deleteUser(firebaseUid);
-    console.log(`[userService] Firebase Auth user deleted for ${firebaseUid}`);
+    result.authDeleted = true;
   } catch (error) {
-    if (error.code !== "auth/user-not-found") throw error;
+    if (error.code === "auth/user-not-found") result.authDeleted = true;
+    else result.errors.push(`auth: ${error.message}`);
   }
+
+  console.log(`[userService] Deleted ${firebaseUid}: data ${result.postgresDeleted}, sign-in ${result.authDeleted}`);
+  return result;
+}
+
+/** The user deleting their own account: signs out every device first. */
+async function deleteAccount(firebaseUid) {
+  try {
+    await auth.revokeRefreshTokens(firebaseUid);
+  } catch (error) {
+    console.warn(`[userService] Could not revoke tokens for ${firebaseUid}: ${error.message}`);
+  }
+
+  const { errors } = await deleteUserEverywhere(firebaseUid);
+  if (errors.length > 0) throw new Error(`Account deletion incomplete: ${errors.join("; ")}`);
 }
 
 module.exports = {
   upsertUserByFirebaseUid,
   updateProfile,
+  deleteUserEverywhere,
   deleteAccount,
 };

@@ -41,8 +41,9 @@ stub("config/database.js", {
     workout: { findMany: async () => [] },
   },
 });
-stub("services/adminService.js", {
-  deleteIronArcUser: async () => ({ postgresDeleted: true, authDeleted: true, errors: [] }),
+stub("config/firebase.js", { auth: {} });
+stub("services/userService.js", {
+  deleteUserEverywhere: async () => ({ postgresDeleted: true, authDeleted: true, errors: [] }),
 });
 
 process.env.ADMIN_SECRET_KEY = "test-key";

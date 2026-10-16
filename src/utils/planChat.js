@@ -2,9 +2,13 @@
  * Plan coach helpers. The AI gets one compact week (not the whole multi-week
  * plan, which exceeded the model's tokens-per-minute limit) and answers with
  * the changed days only; the server applies them to the current and later weeks.
+ *
+ * The coach chat itself is kept inside the plan data, as planData._chatHistory
+ * (newest last), so a plan and its conversation are saved together.
  */
 
-const DAY_ORDER = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const CHAT_HISTORY_MAX = 40;
 
 /** The week the user is on (1-based), clamped to the weeks the plan has. */
 function currentWeekIndex(planData, weekNumber) {
@@ -62,7 +66,7 @@ function expandDays(shortDays, previousDays = []) {
       };
     });
   // Every weekday, in order. A day the coach left out keeps what it was; one the plan never had is a rest day.
-  return DAY_ORDER.map((key) => days.find((d) => d.day === key) || byDay.get(key) || { day: key, sessionType: "rest", recoveryNote: "Rest and recover." });
+  return WEEKDAYS.map((key) => days.find((d) => d.day === key) || byDay.get(key) || { day: key, sessionType: "rest", recoveryNote: "Rest and recover." });
 }
 
 /**
@@ -80,4 +84,35 @@ function applyWeekChange(planData, weekNumber, shortDays, { onlyThisWeek = false
   };
 }
 
-module.exports = { compactWeek, expandDays, applyWeekChange, currentWeekIndex };
+/** The coach's days if the AI changed the week, else null. */
+function changedDays(aiReply) {
+  return Array.isArray(aiReply?.modifiedDays) && aiReply.modifiedDays.length > 0 ? aiReply.modifiedDays : null;
+}
+
+/** The plan's coach chat, oldest first. */
+function chatOf(planData) {
+  return Array.isArray(planData?._chatHistory) ? planData._chatHistory : [];
+}
+
+/** The plan without its chat: what the AI and the validator work on. */
+function withoutChat(planData) {
+  const { _chatHistory, ...plan } = planData ?? {};
+  return plan;
+}
+
+/** The plan with its chat: the earlier history plus new entries, keeping the last 40. */
+function withChat(plan, history, newEntries) {
+  return { ...plan, _chatHistory: [...history, ...newEntries].slice(-CHAT_HISTORY_MAX) };
+}
+
+module.exports = {
+  WEEKDAYS,
+  currentWeekIndex,
+  compactWeek,
+  expandDays,
+  applyWeekChange,
+  changedDays,
+  chatOf,
+  withoutChat,
+  withChat,
+};

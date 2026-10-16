@@ -1,107 +1,12 @@
 /**
- * AI Service — powered by Groq (Llama 3.3 70B)
- *
- * Groq provides a generous free tier (1,000+ RPD) with Llama 3.3 70B,
- * which is excellent at structured JSON generation for workout plans.
- *
- * Exported functions are consumed by planningService.js.
+ * The prompts for every AI plan call: generate, next week, swap and the coach
+ * chat. Plain text in, nothing sent here; services/aiClient.js does the call.
+ * Exercise lists come from the exercise database, for the user's equipment.
  */
-const { groqClient, GROQ_MODEL } = require('../config/groq');
+const { WEEKDAYS } = require('./planChat');
+const { allowedExerciseIds, equipmentTagsFor } = require('./exerciseDatabase');
 
-/* ─────────────────────────────────────────────────────────────
-   Core caller with retry + Retry-After awareness
-───────────────────────────────────────────────────────────── */
-
-/**
- * Extract the Retry-After delay from a 429 response header or error message.
- * Groq returns a `retry-after` header (seconds) on 429s.
- */
-function extractRetryDelaySecs(error) {
-  // Check headers (Groq SDK surfaces them on the error object)
-  const retryAfter = error?.headers?.['retry-after'];
-  if (retryAfter) return parseFloat(retryAfter);
-
-  // Fallback: scan message for retryDelay JSON
-  const match = (error?.message || '').match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
-  if (match) return parseFloat(match[1]);
-
-  return null;
-}
-
-/**
- * @param {string} prompt
- * @param {number} [maxRetries]
- * @param {{ maxTokens?: number }} [options] smaller replies (chat) stay well inside the
- *   free tier's tokens-per-minute limit.
- */
-async function callGroqWithRetry(prompt, maxRetries = 2, options = {}) {
-  let lastError;
-  const maxAttempts = maxRetries + 1;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const completion = await groqClient.chat.completions.create({
-        model: GROQ_MODEL,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You are an expert personal trainer. Always respond with valid JSON only. No markdown, no code fences, no explanation outside the JSON object.',
-          },
-          { role: 'user', content: prompt },
-        ],
-        temperature: 0.7,
-        max_tokens: options.maxTokens || 8192,
-        response_format: { type: 'json_object' },
-      });
-
-      const text = completion.choices[0]?.message?.content || '';
-      const usage = completion.usage || {};
-      console.log(
-        `[AI] attempt ${attempt}: finish=${completion.choices[0]?.finish_reason} · tokens in=${usage.prompt_tokens ?? '?'} out=${usage.completion_tokens ?? '?'} · ${text.length} chars`,
-      );
-
-      // Strip any accidental fences (defensive)
-      const cleaned = text
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim();
-
-      return JSON.parse(cleaned);
-    } catch (error) {
-      lastError = error;
-      // 413 = the request itself is over the model's per-minute token limit: retrying
-      // the same request can never succeed, so stop now.
-      if (error?.status === 413) {
-        console.warn(`[AI] Request too large (413), not retrying: ${error.message}`);
-        throw new Error(`AI_REQUEST_TOO_LARGE: ${error.message}`);
-      }
-      const is429 = error?.status === 429 || (error?.message || '').includes('429');
-
-      console.warn(`[AI] Attempt ${attempt}/${maxAttempts} failed: ${error.message}`);
-
-      if (attempt < maxAttempts) {
-        if (is429) {
-          const serverDelaySecs = extractRetryDelaySecs(error) ?? 30;
-          const waitMs = Math.min(serverDelaySecs * 1000, 60_000);
-          console.warn(`[AI] Rate limited — waiting ${(waitMs / 1000).toFixed(0)}s before retry...`);
-          await new Promise(r => setTimeout(r, waitMs));
-        } else {
-          // Non-rate-limit errors: exponential backoff (1s, 2s, 4s)
-          await new Promise(r => setTimeout(r, Math.pow(2, attempt - 1) * 1000));
-        }
-      }
-    }
-  }
-
-  throw new Error(`AI plan generation failed after ${maxAttempts} attempts: ${lastError?.message}`);
-}
-
-/* ─────────────────────────────────────────────────────────────
-  Prompt builders
-───────────────────────────────────────────────────────────── */
-
-const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const WEEKDAY_NAMES = WEEKDAYS.map((day) => day[0].toUpperCase() + day.slice(1));
 /** How a session flows; the validator also sorts by these tiers as a safety net. */
 const ORDER_RULE =
   'Order each day like a real session: heavy compound lifts first (squat, deadlift, bench, overhead press, rows, pull-ups), then secondary compounds (dumbbell presses, pulldowns, leg press, lunges), then isolation (raises, curls, pushdowns, leg curls, calf raises), core and conditioning last. Finish every set of one exercise before the next.';
@@ -154,11 +59,7 @@ function buildGeneratePlanPrompt(anonymizedProfile, recentWorkouts = [], criteri
   const restDayLayout = criteria.restDayLayout ?? 'spread';
 
   // ── Equipment → exercise pool ─────────────────────────────────────────
-  const exercisePool = equipment === 'bodyweight'
-    ? 'push_up, bodyweight_squat, pull_up, tricep_dip, plank, crunch, leg_raise, russian_twist, jump_rope, burpee, mountain_climber, lunge'
-    : equipment === 'dumbbells'
-    ? 'dumbbell_press, incline_press, push_up, db_shoulder_press, lateral_raise, tricep_dip, dumbbell_row, bicep_curl, db_bicep_curl, goblet_squat, rdl, lunge, leg_curl, calf_raise, plank, crunch, leg_raise, russian_twist, jump_rope, burpee, mountain_climber'
-    : 'bench_press, dumbbell_press, incline_press, push_up, overhead_press, db_shoulder_press, lateral_raise, tricep_dip, tricep_pushdown, pull_up, lat_pulldown, barbell_row, dumbbell_row, seated_cable_row, bicep_curl, db_bicep_curl, squat, goblet_squat, bodyweight_squat, deadlift, rdl, leg_press, lunge, leg_curl, calf_raise, plank, crunch, leg_raise, russian_twist, jump_rope, burpee, mountain_climber';
+  const exercisePool = allowedExerciseIds(equipmentTagsFor(equipment)).join(', ');
 
   // ── Progression style rules ───────────────────────────────────────────
   const progressionRules = {
@@ -300,6 +201,7 @@ No markdown. No code fences. No explanation outside the JSON.
  * Next week, adjusted to what the user actually logged. Same compact week format as the
  * coach chat so it fits the model's per-minute token limit.
  */
+/** meta: { weekNumber, exerciseIds } (the ids the user's equipment allows). */
 function buildNextWeekPrompt(thisWeek, nextWeek, logged, profile = {}, meta = {}) {
   const profileSummary = [
     profile.fitnessGoal && `Goal: ${profile.fitnessGoal}`,
@@ -326,7 +228,7 @@ RULES:
 - An exercise with missed reps or skipped: keep it the same or ease off one set.
 - Most of the week missed: reduce next week's volume about 15%.
 - ${ORDER_RULE}
-- Exercise ids only from: bench_press, dumbbell_press, incline_press, push_up, overhead_press, db_shoulder_press, lateral_raise, tricep_dip, tricep_pushdown, pull_up, lat_pulldown, barbell_row, dumbbell_row, seated_cable_row, bicep_curl, db_bicep_curl, squat, goblet_squat, bodyweight_squat, deadlift, rdl, leg_press, lunge, leg_curl, calf_raise, plank, crunch, leg_raise, russian_twist, jump_rope, burpee, mountain_climber.
+- Exercise ids only from: ${meta.exerciseIds.join(', ')}.
 - "modifiedDays": next week, all 7 days Monday to Sunday in the same short-key format, rest days as {"d":"<day>","t":"rest"}. Use null if next week is right as planned.
 - "message": 1–3 friendly sentences on what you changed for next week and why, based on the log.
 
@@ -334,20 +236,16 @@ Return ONLY this JSON, no markdown:
 {"message": "...", "modifiedDays": null}`;
 }
 
-function buildSubstitutePrompt(exerciseId, reason, anonymizedProfile) {
+function buildSubstitutePrompt(exerciseId, reason, anonymizedProfile, exerciseIds) {
   return `
 You are a fitness expert helping an Iron Arc user substitute an exercise.
 
 Exercise to replace: ${exerciseId}
-Reason: ${reason}
+Reason: ${reason || 'not given'}
 User goal: ${anonymizedProfile.fitnessGoal}
 
 VALID EXERCISE IDs — ONLY USE THESE:
-bench_press, dumbbell_press, incline_press, push_up, overhead_press, db_shoulder_press,
-lateral_raise, tricep_dip, tricep_pushdown, pull_up, lat_pulldown, barbell_row,
-dumbbell_row, seated_cable_row, bicep_curl, db_bicep_curl, squat, goblet_squat,
-bodyweight_squat, deadlift, rdl, leg_press, lunge, leg_curl, calf_raise,
-plank, crunch, leg_raise, russian_twist, jump_rope, burpee, mountain_climber
+${exerciseIds.join(', ')}
 
 Rules:
 - Must be a DIFFERENT exercise from the one being replaced
@@ -367,17 +265,6 @@ Return ONLY valid JSON:
 }
 
 /**
- * buildPlanChatPrompt
- *
- * Generates a prompt for the plan customisation chat.
- * The AI can either answer a question (no plan change) or modify the plan.
- *
- * @param {object} planData  - Current plan JSON
- * @param {Array}  history   - Array of { role: 'user'|'assistant', content: string }
- * @param {string} userMessage - The new message from the user
- * @param {object} profile   - Anonymized user profile for context
- */
-/**
  * Coach chat. Sends one compact week (short keys, no indentation) instead of the
  * whole multi-week plan: the full pretty-printed plan was ~9,600 tokens, over the
  * model's 8,000 tokens-per-minute limit. The AI answers with the changed days only.
@@ -387,6 +274,7 @@ Return ONLY valid JSON:
  *   training day: { "d": "monday", "m": ["chest"], "min": 60,
  *                   "x": [{ "id": "bench_press", "n": "Barbell Bench Press", "s": 4, "r": "6-8", "rest": 90 }] }
  */
+/** meta: { weeks, weekNumber, exerciseIds } (the ids the user's equipment allows). */
 function buildPlanChatPrompt(weekDays, history = [], userMessage, profile = {}, meta = {}) {
   const recentHistory = history.slice(-6);
   const historyText = recentHistory.length > 0
@@ -417,7 +305,7 @@ RULES:
 - To ANSWER a question (technique, nutrition, motivation): return "modifiedDays": null.
 - Never train the same muscle group on consecutive days. Keep sessions within the minutes given.
 - ${ORDER_RULE}
-- Exercise ids only from: bench_press, dumbbell_press, incline_press, push_up, overhead_press, db_shoulder_press, lateral_raise, tricep_dip, tricep_pushdown, pull_up, lat_pulldown, barbell_row, dumbbell_row, seated_cable_row, bicep_curl, db_bicep_curl, squat, goblet_squat, bodyweight_squat, deadlift, rdl, leg_press, lunge, leg_curl, calf_raise, plank, crunch, leg_raise, russian_twist, jump_rope, burpee, mountain_climber.
+- Exercise ids only from: ${meta.exerciseIds.join(', ')}.
 - "message": 1–3 friendly sentences, like a real coach, saying what you changed or answering.
 
 Return ONLY this JSON, no markdown:
@@ -425,7 +313,6 @@ Return ONLY this JSON, no markdown:
 }
 
 module.exports = {
-  callGroqWithRetry,
   buildGeneratePlanPrompt,
   buildNextWeekPrompt,
   buildSubstitutePrompt,

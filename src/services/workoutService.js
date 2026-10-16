@@ -4,28 +4,26 @@ const { HttpError } = require("../utils/httpError");
 const { dateRange, pageResult } = require("../utils/paging");
 
 const notFound = () => new HttpError(404, "Workout not found");
+const withSets = { sets: { orderBy: { setNumber: "asc" } } };
+
+/** Sets as rows, numbered from 1 in the order they were logged. */
+const setRows = (sets) => sets.map((set, i) => ({ setNumber: i + 1, reps: set.reps, weight: set.weight || 0 }));
+
+/** A new workout row with its sets, on `date`. */
+const newWorkout = (userId, date, entry) => ({
+  userId,
+  date: new Date(date),
+  exercise: entry.exercise,
+  category: entry.category,
+  notes: entry.notes || null,
+  sets: { create: setRows(entry.sets || []) },
+});
 
 async function createWorkout(userId, data) {
-  // Workout + sets are written atomically.
-  const workout = await prisma.$transaction((tx) =>
-    tx.workout.create({
-      data: {
-        userId,
-        date: new Date(data.date),
-        exercise: data.exercise,
-        category: data.category,
-        notes: data.notes || null,
-        sets: {
-          create: (data.sets || []).map((set, idx) => ({
-            setNumber: idx + 1,
-            reps: set.reps,
-            weight: set.weight || 0,
-          })),
-        },
-      },
-      include: { sets: true },
-    }),
-  );
+  const workout = await prisma.workout.create({ data: newWorkout(userId, data.date, data), include: withSets });
+
+  // After the save and best-effort: an evaluation failure is logged and never
+  // turns this successful save into an error response.
 
   // After commit and best-effort: an evaluation failure is logged and never
   // turns this successful save into an error response.
@@ -43,25 +41,7 @@ async function createWorkoutBatch(userId, { date, entries }) {
   const workouts = await prisma.$transaction(async (tx) => {
     const created = [];
     for (const entry of entries) {
-      created.push(
-        await tx.workout.create({
-          data: {
-            userId,
-            date: new Date(date),
-            exercise: entry.exercise,
-            category: entry.category,
-            notes: entry.notes || null,
-            sets: {
-              create: (entry.sets || []).map((set, idx) => ({
-                setNumber: idx + 1,
-                reps: set.reps,
-                weight: set.weight || 0,
-              })),
-            },
-          },
-          include: { sets: { orderBy: { setNumber: "asc" } } },
-        }),
-      );
+      created.push(await tx.workout.create({ data: newWorkout(userId, date, entry), include: withSets }));
     }
     return created;
   });
@@ -76,7 +56,7 @@ async function getWorkouts(userId, { page = 1, limit = 20, category, startDate, 
   const [workouts, total] = await Promise.all([
     prisma.workout.findMany({
       where,
-      include: { sets: { orderBy: { setNumber: "asc" } } },
+      include: withSets,
       orderBy: { date: "desc" },
       skip: (page - 1) * limit,
       take: limit,
@@ -90,7 +70,7 @@ async function getWorkouts(userId, { page = 1, limit = 20, category, startDate, 
 async function getWorkout(userId, workoutId) {
   const workout = await prisma.workout.findFirst({
     where: { id: workoutId, userId, deletedAt: null },
-    include: { sets: { orderBy: { setNumber: "asc" } } },
+    include: withSets,
   });
   if (!workout) throw notFound();
   return workout;
@@ -104,13 +84,7 @@ async function updateWorkout(userId, workoutId, data) {
   if (data.notes !== undefined) updateData.notes = data.notes || null;
 
   if (data.sets) {
-    updateData.sets = {
-      create: data.sets.map((set, idx) => ({
-        setNumber: idx + 1,
-        reps: set.reps,
-        weight: set.weight || 0,
-      })),
-    };
+    updateData.sets = { create: setRows(data.sets) };
   }
 
   // Ownership check, set replacement and update in one transaction: if any
@@ -129,7 +103,7 @@ async function updateWorkout(userId, workoutId, data) {
     return tx.workout.update({
       where: { id: workoutId },
       data: updateData,
-      include: { sets: { orderBy: { setNumber: "asc" } } },
+      include: withSets,
     });
   });
 
