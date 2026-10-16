@@ -8,7 +8,7 @@ function anonymizeIronArcProfile(userProfile) {
     age: userProfile.age ?? null,
     height: userProfile.height ?? null,       // nullable — handle in prompt
     weight: userProfile.weight ?? null,       // nullable — handle in prompt
-    fitnessGoal: userProfile.fitnessGoal ?? 'general',
+    fitnessGoal: userProfile.fitnessGoal ?? "general",
     weeklyGoal: userProfile.weeklyGoal ?? 3,
     experienceLevel: userProfile.experienceLevel ?? null,
     equipment: userProfile.equipment ?? null,

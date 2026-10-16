@@ -70,6 +70,11 @@ test("admin delete that removed everything answers 200 (it always said 'partial'
   assert.equal(res.status, 200);
 });
 
+test("a wrong or missing admin key is the same 403", async () => {
+  assert.equal((await call("DELETE", "/api/admin/user/uid-9", null, { "x-admin-key": "nope" })).status, 403);
+  assert.equal((await call("DELETE", "/api/admin/user/uid-9")).status, 403);
+});
+
 test("an AI outage while generating is a 503 'try again', not a 500", { timeout: 15_000 }, async () => {
   const res = await call("POST", "/api/plans/generate", { criteria: {} });
   assert.equal(res.status, 503);

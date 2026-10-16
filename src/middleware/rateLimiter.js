@@ -1,4 +1,4 @@
-const rateLimit = require('express-rate-limit');
+const rateLimit = require("express-rate-limit");
 
 // ── Plan Generation Limiter ────────────────────────────────────────────
 // Strict limiter — Groq calls are expensive, limit plan generation per user
@@ -9,7 +9,7 @@ const planGenerationLimiter = rateLimit({
   legacyHeaders: false,
   message: {
     success: false,
-    message: 'Plan generation limit reached. Your current plan is still active.',
+    message: "Plan generation limit reached. Your current plan is still active.",
   },
   keyGenerator: (req) => req.user?.uid || req.ip,
 });
@@ -22,7 +22,7 @@ const userLimiter = rateLimit({
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, message: 'Too many requests. Please slow down.' },
+  message: { success: false, message: "Too many requests. Please slow down." },
   keyGenerator: (req) => req.user.uid,
 });
 
@@ -34,7 +34,7 @@ const adminLimiter = rateLimit({
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, message: 'Too many requests.' },
+  message: { success: false, message: "Too many requests." },
 });
 
 // ── Plan Coach Chat Limiter ─────────────────────────────────────────────
@@ -47,7 +47,7 @@ const planChatLimiter = rateLimit({
   legacyHeaders: false,
   message: {
     success: false,
-    message: 'Coach message limit reached for this hour. Your plan is unchanged.',
+    message: "Coach message limit reached for this hour. Your plan is unchanged.",
   },
   keyGenerator: (req) => req.user?.uid || req.ip,
 });

@@ -3,28 +3,28 @@
  * chat messages so the "Plan updated" card survives reopening the chat.
  * Mirrors diffPlanWeek in the app (utils/planData.ts).
  */
-const { WEEKDAYS, currentWeekIndex } = require('./planChat');
+const { WEEKDAYS, currentWeekIndex } = require("./planChat");
 
-const DAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const weekDays = (planData, weekNumber) => planData?.weeks?.[currentWeekIndex(planData, weekNumber)]?.days ?? [];
 
-const byWeekday = (days) => WEEKDAYS.map((k) => days.find((d) => (d.day || '').toLowerCase() === k) ?? null);
-const isTraining = (d) => !!d && d.sessionType !== 'rest' && (d.exercises?.length ?? 0) > 0;
-const exKey = (e) => (e.name ?? e.exerciseId ?? '').trim().toLowerCase();
-const scheme = (e) => `${e.sets ?? '?'}×${e.reps ?? '?'}`;
+const byWeekday = (days) => WEEKDAYS.map((k) => days.find((d) => (d.day || "").toLowerCase() === k) ?? null);
+const isTraining = (d) => !!d && d.sessionType !== "rest" && (d.exercises?.length ?? 0) > 0;
+const exKey = (e) => (e.name ?? e.exerciseId ?? "").trim().toLowerCase();
+const scheme = (e) => `${e.sets ?? "?"}×${e.reps ?? "?"}`;
 
 /** "Push", "Legs", "Upper": a short session name from its muscles. */
 function dayShortName(day) {
   if (day.name) return day.name;
   const m = new Set((day.targetMuscles ?? []).map((x) => x.toLowerCase()));
   const has = (...keys) => keys.some((k) => m.has(k));
-  if (has('legs', 'quads', 'hamstrings', 'glutes', 'calves') && !has('chest', 'back', 'shoulders')) return 'Legs';
-  if (has('chest', 'triceps') && !has('back', 'biceps', 'lats')) return 'Push';
-  if (has('back', 'lats', 'biceps') && !has('chest', 'triceps')) return 'Pull';
-  if (has('chest') && has('back')) return has('legs', 'quads', 'hamstrings', 'glutes') ? 'Full body' : 'Upper';
+  if (has("legs", "quads", "hamstrings", "glutes", "calves") && !has("chest", "back", "shoulders")) return "Legs";
+  if (has("chest", "triceps") && !has("back", "biceps", "lats")) return "Push";
+  if (has("back", "lats", "biceps") && !has("chest", "triceps")) return "Pull";
+  if (has("chest") && has("back")) return has("legs", "quads", "hamstrings", "glutes") ? "Full body" : "Upper";
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
-  return (day.targetMuscles ?? []).slice(0, 2).map(cap).join('/') || 'Workout';
+  return (day.targetMuscles ?? []).slice(0, 2).map(cap).join("/") || "Workout";
 }
 
 /**
@@ -45,7 +45,7 @@ function diffPlanWeek(before, after, weekNumber) {
     }
     if (!isTraining(was) && isTraining(now)) {
       const n = now.exercises.length;
-      out.push({ dayIndex: i, text: `${day}: ${dayShortName(now)}, ${n} ${n === 1 ? 'exercise' : 'exercises'}` });
+      out.push({ dayIndex: i, text: `${day}: ${dayShortName(now)}, ${n} ${n === 1 ? "exercise" : "exercises"}` });
       continue;
     }
     if (!isTraining(was) || !isTraining(now)) continue;

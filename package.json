@@ -1,6 +1,6 @@
 {
   "name": "iron-arc-backend",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Backend server for Iron Arc fitness app — Groq planning engine and Firebase Admin",
   "main": "src/app.js",
   "engines": {
@@ -14,7 +14,8 @@
     "db:migrate:prod": "npx prisma migrate deploy",
     "db:studio": "npx prisma studio",
     "postinstall": "npx prisma generate",
-    "test": "node --test"
+    "test": "node --test",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",
@@ -29,5 +30,10 @@
     "pg": "^8.22.0",
     "prisma": "^7.10.1",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0"
   }
 }

@@ -3,31 +3,31 @@
  * chat. Plain text in, nothing sent here; services/aiClient.js does the call.
  * Exercise lists come from the exercise database, for the user's equipment.
  */
-const { WEEKDAYS } = require('./planChat');
-const { allowedExerciseIds, equipmentTagsFor } = require('./exerciseDatabase');
+const { WEEKDAYS } = require("./planChat");
+const { allowedExerciseIds, equipmentTagsFor } = require("./exerciseDatabase");
 
 const WEEKDAY_NAMES = WEEKDAYS.map((day) => day[0].toUpperCase() + day.slice(1));
 /** How a session flows; the validator also sorts by these tiers as a safety net. */
 const ORDER_RULE =
-  'Order each day like a real session: heavy compound lifts first (squat, deadlift, bench, overhead press, rows, pull-ups), then secondary compounds (dumbbell presses, pulldowns, leg press, lunges), then isolation (raises, curls, pushdowns, leg curls, calf raises), core and conditioning last. Finish every set of one exercise before the next.';
-const AVOID_LABELS = { knees: 'knees', lower_back: 'lower back', shoulders: 'shoulders', wrists: 'wrists' };
+  "Order each day like a real session: heavy compound lifts first (squat, deadlift, bench, overhead press, rows, pull-ups), then secondary compounds (dumbbell presses, pulldowns, leg press, lunges), then isolation (raises, curls, pushdowns, leg curls, calf raises), core and conditioning last. Finish every set of one exercise before the next.";
+const AVOID_LABELS = { knees: "knees", lower_back: "lower back", shoulders: "shoulders", wrists: "wrists" };
 const AVOID_RULES = {
-  knees: 'Avoid jumps, deep lunges and very deep squats; prefer box squats, leg press with controlled range, hamstring and glute work.',
-  lower_back: 'Avoid heavy deadlifts and unsupported bent-over rows; prefer chest-supported rows, machine and core-bracing work.',
-  shoulders: 'Avoid behind-the-neck presses, dips and very wide-grip pressing; prefer neutral-grip and landmine-style pressing.',
-  wrists: 'Avoid push-ups on flat palms and heavy straight-bar curls; prefer dumbbells, neutral grips and machines.',
+  knees: "Avoid jumps, deep lunges and very deep squats; prefer box squats, leg press with controlled range, hamstring and glute work.",
+  lower_back: "Avoid heavy deadlifts and unsupported bent-over rows; prefer chest-supported rows, machine and core-bracing work.",
+  shoulders: "Avoid behind-the-neck presses, dips and very wide-grip pressing; prefer neutral-grip and landmine-style pressing.",
+  wrists: "Avoid push-ups on flat palms and heavy straight-bar curls; prefer dumbbells, neutral grips and machines.",
 };
 
 /** Split from days per week when the user didn't choose one. */
 function defaultSplit(days) {
-  if (days <= 3) return 'full_body';
-  if (days === 4) return 'upper_lower';
-  return 'push_pull_legs';
+  if (days <= 3) return "full_body";
+  if (days === 4) return "upper_lower";
+  return "push_pull_legs";
 }
 
 /** Progression from experience when the user didn't choose one. */
 function defaultProgression(experience) {
-  return { beginner: 'linear', intermediate: 'undulating', advanced: 'block' }[experience] || 'linear';
+  return { beginner: "linear", intermediate: "undulating", advanced: "block" }[experience] || "linear";
 }
 
 function buildGeneratePlanPrompt(anonymizedProfile, recentWorkouts = [], criteria = {}) {
@@ -43,56 +43,56 @@ function buildGeneratePlanPrompt(anonymizedProfile, recentWorkouts = [], criteri
     ? `Height: ${height}cm, Weight: not provided`
     : weight
     ? `Weight: ${weight}kg, Height: not provided`
-    : 'Height and weight not provided — build plan based on goal and age only';
+    : "Height and weight not provided — build plan based on goal and age only";
 
   // ── Criteria: the plan form, else the user's training profile, else defaults ──
   const sessionDuration = criteria.sessionDuration ?? anonymizedProfile.sessionMinutes ?? 60;
-  const equipment = criteria.equipment ?? anonymizedProfile.equipment ?? 'full_gym';
-  const experienceLevel = criteria.experienceLevel ?? anonymizedProfile.experienceLevel ?? 'intermediate';
+  const equipment = criteria.equipment ?? anonymizedProfile.equipment ?? "full_gym";
+  const experienceLevel = criteria.experienceLevel ?? anonymizedProfile.experienceLevel ?? "intermediate";
   // Split and progression follow from days and experience when not chosen.
   const splitPreference = criteria.splitPreference ?? defaultSplit(weeklyGoal);
   const progressionStyle = criteria.progressionStyle ?? defaultProgression(experienceLevel);
   const priorityMuscles = Array.isArray(criteria.priorityMuscles) && criteria.priorityMuscles.length > 0
     ? criteria.priorityMuscles
     : null;
-  const intensity = criteria.intensity ?? 'moderate';
-  const restDayLayout = criteria.restDayLayout ?? 'spread';
+  const intensity = criteria.intensity ?? "moderate";
+  const restDayLayout = criteria.restDayLayout ?? "spread";
 
   // ── Equipment → exercise pool ─────────────────────────────────────────
-  const exercisePool = allowedExerciseIds(equipmentTagsFor(equipment)).join(', ');
+  const exercisePool = allowedExerciseIds(equipmentTagsFor(equipment)).join(", ");
 
   // ── Progression style rules ───────────────────────────────────────────
   const progressionRules = {
-    linear: 'Add 2.5–5kg (or 1 rep) to each exercise every week. If the user can complete all sets with perfect form, increase the load.',
-    undulating: 'Week 1: heavy/low reps (4×4-6). Week 2: moderate/medium reps (4×8-10). Week 3: light/high reps (3×12-15). Week 4: deload (3×8 at 60% load). Repeat pattern with increased loads.',
-    block: 'Phase 1 (weeks 1-4): hypertrophy focus, 3×10-12. Phase 2 (weeks 5-8): strength focus, 4×4-6 compound heavy. Phase 3 (weeks 9-12): peaking/intensification, 5×2-4. Then deload.'
-  }[progressionStyle] || 'Add weight progressively each week.';
+    linear: "Add 2.5–5kg (or 1 rep) to each exercise every week. If the user can complete all sets with perfect form, increase the load.",
+    undulating: "Week 1: heavy/low reps (4×4-6). Week 2: moderate/medium reps (4×8-10). Week 3: light/high reps (3×12-15). Week 4: deload (3×8 at 60% load). Repeat pattern with increased loads.",
+    block: "Phase 1 (weeks 1-4): hypertrophy focus, 3×10-12. Phase 2 (weeks 5-8): strength focus, 4×4-6 compound heavy. Phase 3 (weeks 9-12): peaking/intensification, 5×2-4. Then deload."
+  }[progressionStyle] || "Add weight progressively each week.";
 
   // ── Intensity multiplier ──────────────────────────────────────────────
   const intensityNote = {
-    conservative: 'Start at 50-60% estimated 1RM. Increase load only every 2 weeks. Prioritise form over weight.',
-    moderate: 'Start at 65-70% estimated 1RM. Increase load weekly when all sets are completed cleanly.',
-    aggressive: 'Start at 75-80% estimated 1RM. Push to near failure on final set. Increase load as soon as all sets are clean.'
-  }[intensity] || 'Use moderate load progression.';
+    conservative: "Start at 50-60% estimated 1RM. Increase load only every 2 weeks. Prioritise form over weight.",
+    moderate: "Start at 65-70% estimated 1RM. Increase load weekly when all sets are completed cleanly.",
+    aggressive: "Start at 75-80% estimated 1RM. Push to near failure on final set. Increase load as soon as all sets are clean."
+  }[intensity] || "Use moderate load progression.";
 
   // ── Rest day layout: the user's own weekdays when known ───────────────
   const dayNames = trainingDays.map((d) => WEEKDAY_NAMES[d - 1]).filter(Boolean);
   const restDayNote = dayNames.length > 0
-    ? `Schedule the training days ONLY on: ${dayNames.join(', ')}. Every other day of the week is a rest day.`
+    ? `Schedule the training days ONLY on: ${dayNames.join(", ")}. Every other day of the week is a rest day.`
     : {
-    spread: 'Distribute rest days evenly between training days (e.g. Mon/Wed/Fri training, Tue/Thu rest).',
-    weekends: 'Schedule all training days Mon–Fri and both rest days on Sat–Sun.',
-    back_to_back: 'Group all rest days consecutively at the end of the training block (e.g. Fri-Sat-Sun rest).'
-  }[restDayLayout] || 'Spread rest days evenly.';
+    spread: "Distribute rest days evenly between training days (e.g. Mon/Wed/Fri training, Tue/Thu rest).",
+    weekends: "Schedule all training days Mon–Fri and both rest days on Sat–Sun.",
+    back_to_back: "Group all rest days consecutively at the end of the training block (e.g. Fri-Sat-Sun rest)."
+  }[restDayLayout] || "Spread rest days evenly.";
 
   // ── Areas to go easy on ───────────────────────────────────────────────
   const avoidNote = avoidAreas.length > 0
-    ? `The user asked to go easy on: ${avoidAreas.map((a) => AVOID_LABELS[a] || a).join(', ')}. ${avoidAreas.map((a) => AVOID_RULES[a]).filter(Boolean).join(' ')}`
+    ? `The user asked to go easy on: ${avoidAreas.map((a) => AVOID_LABELS[a] || a).join(", ")}. ${avoidAreas.map((a) => AVOID_RULES[a]).filter(Boolean).join(" ")}`
     : null;
 
   // ── Exercise count based on session duration ──────────────────────────
   const maxExercises = sessionDuration <= 30 ? 4 : sessionDuration <= 45 ? 5 : sessionDuration <= 60 ? 7 : 9;
-  const restBetweenSets = sessionDuration <= 45 ? '45-60s' : '60-120s';
+  const restBetweenSets = sessionDuration <= 45 ? "45-60s" : "60-120s";
 
   return `
 You are an elite personal trainer building a highly personalised workout plan for an Iron Arc fitness app user.
@@ -100,7 +100,7 @@ You are an elite personal trainer building a highly personalised workout plan fo
 ═══════════════════════════════════════════════
 USER PROFILE
 ═══════════════════════════════════════════════
-- Age: ${age ?? 'not provided'}
+- Age: ${age ?? "not provided"}
 - ${bodyContext}
 - Primary Goal: ${fitnessGoal}
 - Training Days Per Week: ${weeklyGoal}
@@ -109,24 +109,24 @@ USER PROFILE
 USER-SELECTED PLAN CRITERIA
 ═══════════════════════════════════════════════
 - Session Length: ${sessionDuration} minutes per session
-- Equipment Available: ${equipment.replace(/_/g, ' ')}
+- Equipment Available: ${equipment.replace(/_/g, " ")}
 - Experience Level: ${experienceLevel}
-- Preferred Weekly Split: ${splitPreference.replace(/_/g, ' ')}
+- Preferred Weekly Split: ${splitPreference.replace(/_/g, " ")}
 - Progression System: ${progressionStyle} progression
 - Progression Intensity: ${intensity}
-${priorityMuscles ? `- Priority Muscles (add 20-30% extra volume): ${priorityMuscles.join(', ')}` : '- No specific priority muscles'}
-- Rest Days: ${dayNames.length > 0 ? `trains on ${dayNames.join(', ')}` : restDayLayout.replace(/_/g, ' ')}
-${avoidAreas.length > 0 ? `- Go easy on: ${avoidAreas.map((a) => AVOID_LABELS[a] || a).join(', ')}` : '- No areas to avoid'}
+${priorityMuscles ? `- Priority Muscles (add 20-30% extra volume): ${priorityMuscles.join(", ")}` : "- No specific priority muscles"}
+- Rest Days: ${dayNames.length > 0 ? `trains on ${dayNames.join(", ")}` : restDayLayout.replace(/_/g, " ")}
+${avoidAreas.length > 0 ? `- Go easy on: ${avoidAreas.map((a) => AVOID_LABELS[a] || a).join(", ")}` : "- No areas to avoid"}
 
 ═══════════════════════════════════════════════
 RECENT WORKOUT HISTORY (last 5 sessions)
 ═══════════════════════════════════════════════
-${recentWorkouts.length > 0 ? JSON.stringify(recentWorkouts, null, 2) : 'No history — new user. Start conservatively.'}
+${recentWorkouts.length > 0 ? JSON.stringify(recentWorkouts, null, 2) : "No history — new user. Start conservatively."}
 
 ═══════════════════════════════════════════════
 MANDATORY PLANNING RULES
 ═══════════════════════════════════════════════
-1. SPLIT: Build the week using the "${splitPreference.replace(/_/g, ' ')}" split structure
+1. SPLIT: Build the week using the "${splitPreference.replace(/_/g, " ")}" split structure
 2. SESSIONS: Generate exactly ${weeklyGoal} training days. Fill remaining days as rest
 3. REST DAYS: ${restDayNote}
 4. SESSION LENGTH: Each training session must fit within ${sessionDuration} minutes
@@ -145,8 +145,8 @@ MANDATORY PLANNING RULES
    - general fitness: 8-12 reps, 60s rest, balanced
 10. PROGRESSION: ${progressionRules}
 11. INTENSITY: ${intensityNote}
-${priorityMuscles ? `12. PRIORITY MUSCLES: Add 1-2 extra sets for ${priorityMuscles.join(' and ')} compared to other muscle groups` : ''}
-${avoidNote ? `12b. LIMITATIONS: ${avoidNote}\n` : ''}13. Never train the same muscle group on consecutive days
+${priorityMuscles ? `12. PRIORITY MUSCLES: Add 1-2 extra sets for ${priorityMuscles.join(" and ")} compared to other muscle groups` : ""}
+${avoidNote ? `12b. LIMITATIONS: ${avoidNote}\n` : ""}13. Never train the same muscle group on consecutive days
 13b. EXERCISE ORDER: ${ORDER_RULE}
 14. Include a planExplanation (3-4 sentences) explaining the split choice, progression logic, and how criteria were applied
 
@@ -207,7 +207,7 @@ function buildNextWeekPrompt(thisWeek, nextWeek, logged, profile = {}, meta = {}
     profile.fitnessGoal && `Goal: ${profile.fitnessGoal}`,
     profile.experienceLevel && `Experience: ${profile.experienceLevel}`,
     profile.equipment && `Equipment: ${profile.equipment}`,
-  ].filter(Boolean).join(' · ') || 'Not provided';
+  ].filter(Boolean).join(" · ") || "Not provided";
 
   return `You are a personal trainer preparing next week's sessions from what the user actually did this week.
 
@@ -217,7 +217,7 @@ THIS WEEK (week ${meta.weekNumber}) AS PLANNED:
 ${JSON.stringify(thisWeek)}
 
 LOGGED IN THE LAST 7 DAYS (date, exercise: weight kg × reps per set):
-${logged.length > 0 ? logged.join('\n') : 'Nothing logged.'}
+${logged.length > 0 ? logged.join("\n") : "Nothing logged."}
 
 NEXT WEEK (week ${meta.weekNumber + 1}) AS PLANNED:
 ${JSON.stringify(nextWeek)}
@@ -228,7 +228,7 @@ RULES:
 - An exercise with missed reps or skipped: keep it the same or ease off one set.
 - Most of the week missed: reduce next week's volume about 15%.
 - ${ORDER_RULE}
-- Exercise ids only from: ${meta.exerciseIds.join(', ')}.
+- Exercise ids only from: ${meta.exerciseIds.join(", ")}.
 - "modifiedDays": next week, all 7 days Monday to Sunday in the same short-key format, rest days as {"d":"<day>","t":"rest"}. Use null if next week is right as planned.
 - "message": 1–3 friendly sentences on what you changed for next week and why, based on the log.
 
@@ -241,11 +241,11 @@ function buildSubstitutePrompt(exerciseId, reason, anonymizedProfile, exerciseId
 You are a fitness expert helping an Iron Arc user substitute an exercise.
 
 Exercise to replace: ${exerciseId}
-Reason: ${reason || 'not given'}
+Reason: ${reason || "not given"}
 User goal: ${anonymizedProfile.fitnessGoal}
 
 VALID EXERCISE IDs — ONLY USE THESE:
-${exerciseIds.join(', ')}
+${exerciseIds.join(", ")}
 
 Rules:
 - Must be a DIFFERENT exercise from the one being replaced
@@ -278,8 +278,8 @@ Return ONLY valid JSON:
 function buildPlanChatPrompt(weekDays, history = [], userMessage, profile = {}, meta = {}) {
   const recentHistory = history.slice(-6);
   const historyText = recentHistory.length > 0
-    ? recentHistory.map(m => `${m.role === 'user' ? 'User' : 'Coach'}: ${m.content}`).join('\n')
-    : 'None.';
+    ? recentHistory.map(m => `${m.role === "user" ? "User" : "Coach"}: ${m.content}`).join("\n")
+    : "None.";
 
   const profileSummary = [
     profile.fitnessGoal && `Goal: ${profile.fitnessGoal}`,
@@ -287,7 +287,7 @@ function buildPlanChatPrompt(weekDays, history = [], userMessage, profile = {}, 
     profile.experienceLevel && `Experience: ${profile.experienceLevel}`,
     profile.equipment && `Equipment: ${profile.equipment}`,
     profile.sessionMinutes && `Session: ${profile.sessionMinutes} min`,
-  ].filter(Boolean).join(' · ') || 'Not provided';
+  ].filter(Boolean).join(" · ") || "Not provided";
 
   return `You are a personal trainer coaching a user through chat about their weekly workout plan.
 
@@ -305,7 +305,7 @@ RULES:
 - To ANSWER a question (technique, nutrition, motivation): return "modifiedDays": null.
 - Never train the same muscle group on consecutive days. Keep sessions within the minutes given.
 - ${ORDER_RULE}
-- Exercise ids only from: ${meta.exerciseIds.join(', ')}.
+- Exercise ids only from: ${meta.exerciseIds.join(", ")}.
 - "message": 1–3 friendly sentences, like a real coach, saying what you changed or answering.
 
 Return ONLY this JSON, no markdown:

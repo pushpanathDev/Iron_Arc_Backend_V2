@@ -1,9 +1,7 @@
-/**
- * Runnable check for the achievement evaluator (not a test framework).
- *   node src/utils/achievementEvaluator.test.js
- * Uses synthetic data only — no database or Firebase. The Prisma module is
- * replaced with an in-memory fake before achievementService is loaded.
- */
+// Badge metrics on synthetic data, then the badge service against an
+// in-memory fake database (no real database or Firebase).
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
 const path = require("path");
 const {
   computeStreaks,
@@ -19,14 +17,8 @@ const {
 } = require("./achievementEvaluator");
 const { ACHIEVEMENT_DEFINITIONS, TRIGGER_EVENTS } = require("./achievementDefinitions");
 
-let passed = 0;
-let failed = 0;
-function check(name, actual, expected) {
-  const ok = JSON.stringify(actual) === JSON.stringify(expected);
-  if (ok) passed += 1;
-  else failed += 1;
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${ok ? "" : `  (expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)})`}`);
-}
+/** One test per check: `actual` must deep-equal `expected`. */
+const check = (name, actual, expected) => test(name, () => assert.deepEqual(actual, expected));
 
 // Helpers -------------------------------------------------------------------
 function addDays(key, n) {
@@ -42,7 +34,6 @@ function workout(date, exercise, category, sets, createdAt) {
 }
 
 // ── Catalog ─────────────────────────────────────────────────────────────────
-console.log("\n# Catalog");
 check("28 badges", ACHIEVEMENT_DEFINITIONS.length, 28);
 check("keys are unique", new Set(ACHIEVEMENT_DEFINITIONS.map((d) => d.key)).size, 28);
 check(
@@ -67,7 +58,6 @@ check(
 );
 
 // ── Streaks ─────────────────────────────────────────────────────────────────
-console.log("\n# Streaks");
 check("empty history", computeStreaks([], "2026-10-10"), { currentStreak: 0, longestStreak: 0 });
 check("alive (trained today), duplicates ignored",
   computeStreaks(["2026-10-08", "2026-10-09", "2026-10-10", "2026-10-10"], "2026-10-10"),
@@ -89,7 +79,6 @@ check("latest day one ahead of server today (UTC+ user) counts as alive",
   { currentStreak: 2, longestStreak: 2 });
 
 // ── Weekly streak (weeks in a row meeting the goal) ─────────────────────────
-console.log("\n# Week streaks");
 // Mondays: 2026-09-21, 09-28, 10-05. Goal 2 days a week.
 const twoAWeek = ["2026-09-21", "2026-09-23", "2026-09-28", "2026-09-30", "2026-10-05", "2026-10-07"];
 check("three weeks met, this week included", computeWeekStreaks(twoAWeek, "2026-10-08", 2), { currentWeekStreak: 3, longestWeekStreak: 3 });
@@ -104,7 +93,6 @@ check("rest days don't matter, only days per week",
   { currentWeekStreak: 2, longestWeekStreak: 2 });
 
 // ── Weekly consistency (Mon–Sun) ────────────────────────────────────────────
-console.log("\n# Weekly");
 // 2026-10-05 is a Monday.
 check("4 days in one week", computeWeekly(["2026-10-05", "2026-10-06", "2026-10-08", "2026-10-11"]),
   { bestWeekDays: 4, consecutive4xWeeks: 1 });
@@ -117,7 +105,6 @@ const withGapWeek = fourWeeks.filter((k) => k < "2026-09-14" || k >= "2026-09-21
 check("a weak week breaks the run", computeWeekly(withGapWeek).consecutive4xWeeks, 2);
 
 // ── Personal records ────────────────────────────────────────────────────────
-console.log("\n# Personal records");
 check("first time is not a PR", countPrExercises([workout("2026-10-01", "Bench", "Chest", [{ reps: 5, weight: 60 }, { reps: 5, weight: 80 }])]), 0);
 check("heavier later set is a PR", countPrExercises([
   workout("2026-10-01", "Bench", "Chest", [{ reps: 5, weight: 60 }]),
@@ -160,14 +147,12 @@ check("same day is one session: the first day is the baseline", countPrExercises
 ]), 0);
 
 // ── Comeback ────────────────────────────────────────────────────────────────
-console.log("\n# Comeback");
 check("no gap", computeComeback(days("2026-09-01", 10)), 0);
 check("13 rest days is not a break", computeComeback(["2026-09-01", "2026-09-15", "2026-09-16", "2026-09-17"]), 0);
 check("14 rest days then 3 sessions", computeComeback(["2026-09-01", "2026-09-16", "2026-09-17", "2026-09-19"]), 3);
 check("14 rest days then 2 sessions", computeComeback(["2026-09-01", "2026-09-16", "2026-09-18"]), 2);
 
 // ── Full workout metrics ────────────────────────────────────────────────────
-console.log("\n# Workout metrics");
 const sample = [
   workout("2026-10-03", "Bench", "Chest", [{ reps: 10, weight: 50 }, { reps: 8, weight: 60 }]), // Sat
   workout("2026-10-03", "Pull Up", "Back", [{ reps: 8, weight: 0 }]),                          // same day
@@ -187,7 +172,6 @@ check("max workouts in a day", m.maxWorkoutsInDay, 2);
 check("current = longest streak", [m.currentStreak, m.longestStreak], [6, 6]);
 
 // ── Muscle groups ───────────────────────────────────────────────────────────
-console.log("\n# Muscle groups");
 check("muscle groups covered, fixed order, unmapped ignored",
   muscleGroupsCovered([
     workout("2026-10-01", "Squat", "Legs", []),
@@ -198,13 +182,11 @@ check("muscle groups covered, fixed order, unmapped ignored",
   ["Chest", "Legs", "Core"]);
 
 // ── Weight metrics ──────────────────────────────────────────────────────────
-console.log("\n# Weight metrics");
 check("entries and distinct days",
   computeWeightMetrics([{ date: "2026-10-01" }, { date: "2026-10-02" }, { date: new Date("2026-10-03T00:00:00Z") }]),
   { weightEntries: 3, weightDistinctDays: 3 });
 
 // ── Definitions ─────────────────────────────────────────────────────────────
-console.log("\n# Definitions");
 const byKey = Object.fromEntries(
   evaluateDefinitions(ACHIEVEMENT_DEFINITIONS, { ...m, longestWeekStreak: 4, currentWeekStreak: 1 }).map((r) => [r.key, r]),
 );
@@ -216,8 +198,7 @@ check("volume_1k earned (1,800 kg)", byKey.volume_1k.earned, true);
 check("volume_10k locked with progress", [byKey.volume_10k.earned, byKey.volume_10k.progress], [false, 1800]);
 
 // ── Service: append-only evaluation against an in-memory fake DB ────────────
-async function serviceChecks() {
-  console.log("\n# Service (fake DB)");
+test("badge service (fake database)", async (t) => {
   const state = { workouts: [], weights: [], achievements: [], customExercises: 0, plans: 0, generations: 0 };
   const fakeDb = {
     workout: { findMany: async () => state.workouts.filter((w) => !w.deletedAt) },
@@ -237,50 +218,46 @@ async function serviceChecks() {
       },
     },
   };
-
   const dbPath = require.resolve(path.join(__dirname, "..", "config", "database.js"));
   require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: { prisma: fakeDb } };
   const { evaluateAchievements } = require("../services/achievementService");
+  const earned = (key) => state.achievements.find((a) => a.badgeKey === key);
 
-  state.workouts.push(workout("2026-10-10", "Bench", "Chest", [{ reps: 10, weight: 60 }]));
-  const first = await evaluateAchievements("u1", "workout");
-  check("first workout unlocks workout_1", first.includes("workout_1"), true);
-
-  const again = await evaluateAchievements("u1", "workout");
-  check("re-evaluating returns no new keys (idempotent)", again, []);
-
-  const unlockedAt = state.achievements.find((a) => a.badgeKey === "workout_1").unlockedAt.toISOString();
-  state.workouts[0].deletedAt = new Date();
-  await evaluateAchievements("u1", "workout");
-  check("deleting the workout does not revoke workout_1",
-    state.achievements.some((a) => a.badgeKey === "workout_1"), true);
-  check("unlockedAt is never changed",
-    state.achievements.find((a) => a.badgeKey === "workout_1").unlockedAt.toISOString(), unlockedAt);
-
-  state.weights.push({ date: "2026-10-10" });
-  const viaWorkout = await evaluateAchievements("u1", "workout");
-  check("workout trigger does not evaluate weight badges (weight exists)", viaWorkout.includes("weight_first"), false);
-  check("weight trigger unlocks weight_first", await evaluateAchievements("u1", "weight"), ["weight_first"]);
-
-  state.plans = 1; // one plan left after deleting others…
-  state.generations = 3; // …but 3 were generated
-  const plan = await evaluateAchievements("u1", "plan");
-  check("plan trigger uses generation count (3)", plan.sort(), ["ai_plan_1", "ai_plan_3"]);
-
-  state.customExercises = 1;
-  check("custom_exercise trigger", await evaluateAchievements("u1", "custom_exercise"), ["custom_exercise_1"]);
-
-  let threw = false;
-  try { await evaluateAchievements("u1", "bogus"); } catch { threw = true; }
-  check("unknown trigger event is rejected", threw, true);
-}
-
-serviceChecks()
-  .catch((error) => {
-    failed += 1;
-    console.log(`FAIL  service checks threw: ${error.stack}`);
-  })
-  .finally(() => {
-    console.log(`\n${passed} passed, ${failed} failed`);
-    process.exitCode = failed > 0 ? 1 : 0;
+  await t.test("first workout unlocks workout_1", async () => {
+    state.workouts.push(workout("2026-10-10", "Bench", "Chest", [{ reps: 10, weight: 60 }]));
+    assert.ok((await evaluateAchievements("u1", "workout")).includes("workout_1"));
   });
+
+  await t.test("re-evaluating returns no new keys (idempotent)", async () => {
+    assert.deepEqual(await evaluateAchievements("u1", "workout"), []);
+  });
+
+  await t.test("deleting the workout keeps workout_1, with its unlockedAt unchanged", async () => {
+    const unlockedAt = earned("workout_1").unlockedAt.toISOString();
+    state.workouts[0].deletedAt = new Date();
+    await evaluateAchievements("u1", "workout");
+    assert.ok(earned("workout_1"));
+    assert.equal(earned("workout_1").unlockedAt.toISOString(), unlockedAt);
+  });
+
+  await t.test("each trigger only checks its own badges", async () => {
+    state.weights.push({ date: "2026-10-10" });
+    assert.equal((await evaluateAchievements("u1", "workout")).includes("weight_first"), false);
+    assert.deepEqual(await evaluateAchievements("u1", "weight"), ["weight_first"]);
+  });
+
+  await t.test("plan badges count plans generated, not plans left", async () => {
+    state.plans = 1; // one plan left after deleting others…
+    state.generations = 3; // …but 3 were generated
+    assert.deepEqual((await evaluateAchievements("u1", "plan")).sort(), ["ai_plan_1", "ai_plan_3"]);
+  });
+
+  await t.test("custom exercise trigger", async () => {
+    state.customExercises = 1;
+    assert.deepEqual(await evaluateAchievements("u1", "custom_exercise"), ["custom_exercise_1"]);
+  });
+
+  await t.test("an unknown trigger event is rejected", async () => {
+    await assert.rejects(evaluateAchievements("u1", "bogus"));
+  });
+});

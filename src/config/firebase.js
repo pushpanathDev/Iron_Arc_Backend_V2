@@ -17,7 +17,7 @@ function createFirebaseCredential() {
 
       return cert(serviceAccount);
     } catch (error) {
-      throw new Error(`Invalid FIREBASE_SERVICE_ACCOUNT value: ${error.message}`);
+      throw new Error(`Invalid FIREBASE_SERVICE_ACCOUNT value: ${error.message}`, { cause: error });
     }
   }
 
