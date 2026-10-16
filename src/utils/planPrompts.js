@@ -5,6 +5,7 @@
  */
 const { WEEKDAYS } = require("./planChat");
 const { allowedExerciseIds, equipmentTagsFor } = require("./exerciseDatabase");
+const { SPLIT_NAMES, PROGRESSION_RULES } = require("./planSchedule");
 
 const WEEKDAY_NAMES = WEEKDAYS.map((day) => day[0].toUpperCase() + day.slice(1));
 /** How a session flows; the validator also sorts by these tiers as a safety net. */
@@ -18,190 +19,75 @@ const AVOID_RULES = {
   wrists: "Avoid push-ups on flat palms and heavy straight-bar curls; prefer dumbbells, neutral grips and machines.",
 };
 
-/** Split from days per week when the user didn't choose one. */
-function defaultSplit(days) {
-  if (days <= 3) return "full_body";
-  if (days === 4) return "upper_lower";
-  return "push_pull_legs";
+/** "Height: 180cm, Weight: 80kg", or what's missing. */
+function bodyContext({ height, weight }) {
+  if (height && weight) return `Height: ${height}cm, Weight: ${weight}kg`;
+  if (height) return `Height: ${height}cm, Weight: not provided`;
+  if (weight) return `Weight: ${weight}kg, Height: not provided`;
+  return "Height and weight not provided — build plan based on goal and age only";
 }
 
-/** Progression from experience when the user didn't choose one. */
-function defaultProgression(experience) {
-  return { beginner: "linear", intermediate: "undulating", advanced: "block" }[experience] || "linear";
-}
+const INTENSITY_NOTES = {
+  conservative: "Start at 50-60% estimated 1RM. Increase load only every 2 weeks. Prioritise form over weight.",
+  moderate: "Start at 65-70% estimated 1RM. Increase load weekly when all sets are completed cleanly.",
+  aggressive: "Start at 75-80% estimated 1RM. Push to near failure on final set. Increase load as soon as all sets are clean.",
+};
 
-function buildGeneratePlanPrompt(anonymizedProfile, recentWorkouts = [], criteria = {}) {
-  const { age, height, weight, fitnessGoal } = anonymizedProfile;
-  const trainingDays = Array.isArray(anonymizedProfile.trainingDays) ? anonymizedProfile.trainingDays : [];
-  const avoidAreas = Array.isArray(anonymizedProfile.avoidAreas) ? anonymizedProfile.avoidAreas : [];
-  // Chosen weekdays decide the session count when the user picked them.
-  const weeklyGoal = trainingDays.length > 0 ? trainingDays.length : anonymizedProfile.weeklyGoal;
+/**
+ * Week 1 of a new plan. The week itself (which days, which session, which
+ * muscles) comes from planSchedule.planSettings; the AI only picks the
+ * exercises for each training day. `recent` is the last workouts, one line each.
+ */
+function buildFirstWeekPrompt(profile, settings, recent = []) {
+  const { minutes, equipment, experience, split, progression, intensity, priorityMuscles, schedule, totalWeeks } = settings;
+  const avoidAreas = Array.isArray(profile.avoidAreas) ? profile.avoidAreas : [];
+  const avoid = avoidAreas.length > 0
+    ? `${avoidAreas.map((a) => AVOID_LABELS[a] || a).join(", ")}. ${avoidAreas.map((a) => AVOID_RULES[a]).filter(Boolean).join(" ")}`
+    : "nothing";
+  const maxExercises = minutes <= 30 ? 4 : minutes <= 45 ? 5 : minutes <= 60 ? 7 : 8;
+  const restBetweenSets = minutes <= 45 ? "45-60s" : "60-120s";
+  const week = schedule.map((s) => `- ${WEEKDAY_NAMES[WEEKDAYS.indexOf(s.day)]}: ${s.session} (${s.muscles.join(", ")})`).join("\n");
 
-  const bodyContext = height && weight
-    ? `Height: ${height}cm, Weight: ${weight}kg`
-    : height
-    ? `Height: ${height}cm, Weight: not provided`
-    : weight
-    ? `Weight: ${weight}kg, Height: not provided`
-    : "Height and weight not provided — build plan based on goal and age only";
+  return `You are an elite personal trainer writing week 1 of a ${totalWeeks}-week workout plan for an Iron Arc fitness app user. Later weeks are written one at a time from what the user logs.
 
-  // ── Criteria: the plan form, else the user's training profile, else defaults ──
-  const sessionDuration = criteria.sessionDuration ?? anonymizedProfile.sessionMinutes ?? 60;
-  const equipment = criteria.equipment ?? anonymizedProfile.equipment ?? "full_gym";
-  const experienceLevel = criteria.experienceLevel ?? anonymizedProfile.experienceLevel ?? "intermediate";
-  // Split and progression follow from days and experience when not chosen.
-  const splitPreference = criteria.splitPreference ?? defaultSplit(weeklyGoal);
-  const progressionStyle = criteria.progressionStyle ?? defaultProgression(experienceLevel);
-  const priorityMuscles = Array.isArray(criteria.priorityMuscles) && criteria.priorityMuscles.length > 0
-    ? criteria.priorityMuscles
-    : null;
-  const intensity = criteria.intensity ?? "moderate";
-  const restDayLayout = criteria.restDayLayout ?? "spread";
+USER
+- Age: ${profile.age ?? "not provided"}
+- ${bodyContext(profile)}
+- Goal: ${profile.fitnessGoal}
+- Experience: ${experience}
+- Equipment: ${equipment.replace(/_/g, " ")}
+- Session length: ${minutes} minutes
+- Split: ${SPLIT_NAMES[split]}
+- Progression: ${progression}. ${PROGRESSION_RULES[progression]}
+- Intensity: ${intensity}. ${INTENSITY_NOTES[intensity] || INTENSITY_NOTES.moderate}
+- Priority muscles (1-2 extra sets each): ${priorityMuscles.length > 0 ? priorityMuscles.join(", ") : "none"}
+- Go easy on: ${avoid}
 
-  // ── Equipment → exercise pool ─────────────────────────────────────────
-  const exercisePool = allowedExerciseIds(equipmentTagsFor(equipment)).join(", ");
+RECENT WORKOUTS (date, exercise: weight kg × reps per set)
+${recent.length > 0 ? recent.join("\n") : "None — new user. Start conservatively."}
 
-  // ── Progression style rules ───────────────────────────────────────────
-  const progressionRules = {
-    linear: "Add 2.5–5kg (or 1 rep) to each exercise every week. If the user can complete all sets with perfect form, increase the load.",
-    undulating: "Week 1: heavy/low reps (4×4-6). Week 2: moderate/medium reps (4×8-10). Week 3: light/high reps (3×12-15). Week 4: deload (3×8 at 60% load). Repeat pattern with increased loads.",
-    block: "Phase 1 (weeks 1-4): hypertrophy focus, 3×10-12. Phase 2 (weeks 5-8): strength focus, 4×4-6 compound heavy. Phase 3 (weeks 9-12): peaking/intensification, 5×2-4. Then deload."
-  }[progressionStyle] || "Add weight progressively each week.";
+THIS WEEK — fixed by the app. Write exercises for exactly these training days; every other day is a rest day.
+${week}
 
-  // ── Intensity multiplier ──────────────────────────────────────────────
-  const intensityNote = {
-    conservative: "Start at 50-60% estimated 1RM. Increase load only every 2 weeks. Prioritise form over weight.",
-    moderate: "Start at 65-70% estimated 1RM. Increase load weekly when all sets are completed cleanly.",
-    aggressive: "Start at 75-80% estimated 1RM. Push to near failure on final set. Increase load as soon as all sets are clean."
-  }[intensity] || "Use moderate load progression.";
+RULES
+1. Each session fits in ${minutes} minutes: at most ${maxExercises} exercises, ${restBetweenSets} rest between sets.
+2. Train the listed muscles on each day. A session that repeats (e.g. two Push days) trains the same muscles; vary one or two exercises if you like.
+3. Experience: beginner 2-3 sets, compound movements first, avoid failure; intermediate 3-4 sets, compound + isolation, 1-2 reps in reserve; advanced 4-5 sets, drop sets and supersets allowed, closer to failure.
+4. Rep ranges by goal: strength 3-5 reps, 3-5 min rest; muscle 6-12 reps, 60-90s rest; endurance 15-20 reps, 30-45s rest; weight-loss 10-15 reps, 45-60s rest; general fitness 8-12 reps, 60s rest.
+5. ${ORDER_RULE}
+6. Exercise ids only from: ${allowedExerciseIds(equipmentTagsFor(equipment)).join(", ")}.
+7. "progressionNote": one short line on how to progress that exercise next week.
+8. "planExplanation": 2 sentences on why this split and progression suit the user.
 
-  // ── Rest day layout: the user's own weekdays when known ───────────────
-  const dayNames = trainingDays.map((d) => WEEKDAY_NAMES[d - 1]).filter(Boolean);
-  const restDayNote = dayNames.length > 0
-    ? `Schedule the training days ONLY on: ${dayNames.join(", ")}. Every other day of the week is a rest day.`
-    : {
-    spread: "Distribute rest days evenly between training days (e.g. Mon/Wed/Fri training, Tue/Thu rest).",
-    weekends: "Schedule all training days Mon–Fri and both rest days on Sat–Sun.",
-    back_to_back: "Group all rest days consecutively at the end of the training block (e.g. Fri-Sat-Sun rest)."
-  }[restDayLayout] || "Spread rest days evenly.";
-
-  // ── Areas to go easy on ───────────────────────────────────────────────
-  const avoidNote = avoidAreas.length > 0
-    ? `The user asked to go easy on: ${avoidAreas.map((a) => AVOID_LABELS[a] || a).join(", ")}. ${avoidAreas.map((a) => AVOID_RULES[a]).filter(Boolean).join(" ")}`
-    : null;
-
-  // ── Exercise count based on session duration ──────────────────────────
-  const maxExercises = sessionDuration <= 30 ? 4 : sessionDuration <= 45 ? 5 : sessionDuration <= 60 ? 7 : 9;
-  const restBetweenSets = sessionDuration <= 45 ? "45-60s" : "60-120s";
-
-  return `
-You are an elite personal trainer building a highly personalised workout plan for an Iron Arc fitness app user.
-
-═══════════════════════════════════════════════
-USER PROFILE
-═══════════════════════════════════════════════
-- Age: ${age ?? "not provided"}
-- ${bodyContext}
-- Primary Goal: ${fitnessGoal}
-- Training Days Per Week: ${weeklyGoal}
-
-═══════════════════════════════════════════════
-USER-SELECTED PLAN CRITERIA
-═══════════════════════════════════════════════
-- Session Length: ${sessionDuration} minutes per session
-- Equipment Available: ${equipment.replace(/_/g, " ")}
-- Experience Level: ${experienceLevel}
-- Preferred Weekly Split: ${splitPreference.replace(/_/g, " ")}
-- Progression System: ${progressionStyle} progression
-- Progression Intensity: ${intensity}
-${priorityMuscles ? `- Priority Muscles (add 20-30% extra volume): ${priorityMuscles.join(", ")}` : "- No specific priority muscles"}
-- Rest Days: ${dayNames.length > 0 ? `trains on ${dayNames.join(", ")}` : restDayLayout.replace(/_/g, " ")}
-${avoidAreas.length > 0 ? `- Go easy on: ${avoidAreas.map((a) => AVOID_LABELS[a] || a).join(", ")}` : "- No areas to avoid"}
-
-═══════════════════════════════════════════════
-RECENT WORKOUT HISTORY (last 5 sessions)
-═══════════════════════════════════════════════
-${recentWorkouts.length > 0 ? JSON.stringify(recentWorkouts, null, 2) : "No history — new user. Start conservatively."}
-
-═══════════════════════════════════════════════
-MANDATORY PLANNING RULES
-═══════════════════════════════════════════════
-1. SPLIT: Build the week using the "${splitPreference.replace(/_/g, " ")}" split structure
-2. SESSIONS: Generate exactly ${weeklyGoal} training days. Fill remaining days as rest
-3. REST DAYS: ${restDayNote}
-4. SESSION LENGTH: Each training session must fit within ${sessionDuration} minutes
-5. EXERCISES PER SESSION: Maximum ${maxExercises} exercises per training day
-6. REST BETWEEN SETS: ${restBetweenSets} (matching session length constraint)
-7. EQUIPMENT: ONLY use exercises from the allowed pool below
-8. EXPERIENCE:
-   - beginner: 2-3 sets, compound movements first, avoid failure
-   - intermediate: 3-4 sets, compound + isolation mix, 1-2 RIR
-   - advanced: 4-5 sets, advanced techniques allowed (drop sets, supersets), train closer to failure
-9. GOAL-BASED REP RANGES:
-   - strength: 3-5 reps, 3-5 min rest, compound barbell lifts priority
-   - muscle/hypertrophy: 6-12 reps, 60-90s rest, compound + isolation
-   - endurance: 15-20 reps, 30-45s rest, circuit-friendly
-   - weight-loss: 10-15 reps, 45-60s rest, full body compound focus
-   - general fitness: 8-12 reps, 60s rest, balanced
-10. PROGRESSION: ${progressionRules}
-11. INTENSITY: ${intensityNote}
-${priorityMuscles ? `12. PRIORITY MUSCLES: Add 1-2 extra sets for ${priorityMuscles.join(" and ")} compared to other muscle groups` : ""}
-${avoidNote ? `12b. LIMITATIONS: ${avoidNote}\n` : ""}13. Never train the same muscle group on consecutive days
-13b. EXERCISE ORDER: ${ORDER_RULE}
-14. Include a planExplanation (3-4 sentences) explaining the split choice, progression logic, and how criteria were applied
-
-═══════════════════════════════════════════════
-ALLOWED EXERCISE IDs — ONLY USE THESE
-═══════════════════════════════════════════════
-${exercisePool}
-
-═══════════════════════════════════════════════
-OUTPUT FORMAT — RETURN ONLY VALID JSON
-═══════════════════════════════════════════════
-No markdown. No code fences. No explanation outside the JSON.
-
-{
-  "planExplanation": "3-4 sentence explanation of the plan design choices",
-  "weeks": [
-    {
-      "week": 1,
-      "isDeloadWeek": false,
-      "days": [
-        {
-          "day": "monday",
-          "sessionType": "training",
-          "targetMuscles": ["chest", "triceps"],
-          "estimatedDurationMinutes": ${sessionDuration},
-          "exercises": [
-            {
-              "exerciseId": "bench_press",
-              "name": "Barbell Bench Press",
-              "sets": 4,
-              "reps": "6-8",
-              "restSeconds": 90,
-              "targetWeight_kg": null,
-              "progressionNote": "Add 2.5kg when all 4 sets complete",
-              "substitutes": ["dumbbell_press", "push_up"]
-            }
-          ]
-        },
-        {
-          "day": "tuesday",
-          "sessionType": "rest",
-          "recoveryNote": "Active recovery — walk, stretch, or foam roll"
-        }
-      ]
-    }
-  ]
-}
-`;
+Return ONLY this JSON, no markdown, with one entry per training day listed above, in order:
+{"planExplanation": "...", "days": [{"day": "monday", "exercises": [{"exerciseId": "bench_press", "name": "Barbell Bench Press", "sets": 4, "reps": "6-8", "restSeconds": 90, "progressionNote": "Add 2.5 kg when all sets reach 8 reps"}]}]}`;
 }
 
 /**
  * Next week, adjusted to what the user actually logged. Same compact week format as the
  * coach chat so it fits the model's per-minute token limit.
+ * meta: { weekNumber, totalWeeks, progression, deload, exerciseIds } (ids the user's equipment allows).
  */
-/** meta: { weekNumber, exerciseIds } (the ids the user's equipment allows). */
 function buildNextWeekPrompt(thisWeek, nextWeek, logged, profile = {}, meta = {}) {
   const profileSummary = [
     profile.fitnessGoal && `Goal: ${profile.fitnessGoal}`,
@@ -212,6 +98,7 @@ function buildNextWeekPrompt(thisWeek, nextWeek, logged, profile = {}, meta = {}
   return `You are a personal trainer preparing next week's sessions from what the user actually did this week.
 
 PROFILE: ${profileSummary}
+PLAN: next week is week ${meta.weekNumber + 1} of ${meta.totalWeeks}. Progression: ${PROGRESSION_RULES[meta.progression] || "Add weight progressively each week."}${meta.deload ? " Next week is a deload week: about 60% of the usual load and one set fewer per exercise." : ""}
 Short keys: d=day, t=rest, m=muscles, min=minutes, x=exercises with id, n=name, s=sets, r=reps, rest=seconds.
 THIS WEEK (week ${meta.weekNumber}) AS PLANNED:
 ${JSON.stringify(thisWeek)}
@@ -223,7 +110,7 @@ NEXT WEEK (week ${meta.weekNumber + 1}) AS PLANNED:
 ${JSON.stringify(nextWeek)}
 
 RULES:
-- Keep the same training days and split.
+- Keep the same training days and split, and follow the plan's progression above.
 - An exercise done with all its reps: progress it (one more rep in the range, or one more set if reps are at the top).
 - An exercise with missed reps or skipped: keep it the same or ease off one set.
 - Most of the week missed: reduce next week's volume about 15%.
@@ -313,7 +200,7 @@ Return ONLY this JSON, no markdown:
 }
 
 module.exports = {
-  buildGeneratePlanPrompt,
+  buildFirstWeekPrompt,
   buildNextWeekPrompt,
   buildSubstitutePrompt,
   buildPlanChatPrompt,

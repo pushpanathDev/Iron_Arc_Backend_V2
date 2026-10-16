@@ -54,7 +54,13 @@ src/app.js                  security headers, JSON body (50 kb), routes, 404, er
 
 - **`services/aiClient.js`** is the only file that calls Groq: one prompt in, one
   JSON object out, with retries (it waits as long as Groq asks after a 429).
-- **`utils/planPrompts.js`** has the prompts: generate, next week, swap, coach.
+- **Plans are written one week at a time.** `utils/planSchedule.js` decides the
+  week (which days, which session, e.g. Push / Pull / Legs twice on Mon–Sat), the
+  plan length (8 weeks; 12 for block progression) and the lighter weeks (every
+  4th). The AI only fills in the exercises, and a day it leaves out gets the same
+  session from another day. "Next week" then writes each following week from
+  this one and the user's log.
+- **`utils/planPrompts.js`** has the prompts: week 1, next week, swap, coach.
 - **`utils/exerciseDatabase.js`** is the list of exercises plans may use. Every
   prompt offers only the exercises the user's equipment allows. It also decides
   the order within a session and finds replacements.

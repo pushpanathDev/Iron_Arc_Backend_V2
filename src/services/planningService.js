@@ -6,7 +6,8 @@ const { compactWeek, applyWeekChange, changedDays, chatOf, withoutChat, withChat
 const { diffPlanWeek } = require("../utils/planDiff");
 const { planHasExercise, exerciseNameIn, applySubstitution } = require("../utils/planSwap");
 const { EXERCISE_DB, equipmentTagsFor, allowedExerciseIds, getSubstituteExerciseId } = require("../utils/exerciseDatabase");
-const { buildGeneratePlanPrompt, buildNextWeekPrompt, buildSubstitutePrompt, buildPlanChatPrompt } = require("../utils/planPrompts");
+const { buildFirstWeekPrompt, buildNextWeekPrompt, buildSubstitutePrompt, buildPlanChatPrompt } = require("../utils/planPrompts");
+const { SPLIT_NAMES, planSettings, assembleWeek, withNextWeek, planLength, isDeloadWeek } = require("../utils/planSchedule");
 const { askForJson } = require("./aiClient");
 const { evaluateAchievementsSafely } = require("./achievementService");
 
@@ -57,7 +58,14 @@ function equipmentOf(user, criteria) {
 
 const now = () => new Date().toISOString();
 
-/** The last 5 workouts with their sets, as context for a new plan. */
+/** A logged workout as one line for a prompt: "2026-10-14 Bench Press: 60×10, 62.5×8". */
+function workoutLine(w) {
+  const day = new Date(w.date).toISOString().slice(0, 10);
+  const sets = w.sets.map((x) => (x.weight ? `${x.weight}×${x.reps}` : `${x.reps}`)).join(", ");
+  return `${day} ${w.exercise}: ${sets}`;
+}
+
+/** The last 5 workouts, oldest first, as context for a new plan. */
 async function recentWorkouts(userId) {
   const workouts = await prisma.workout.findMany({
     where: { userId, deletedAt: null },
@@ -65,10 +73,10 @@ async function recentWorkouts(userId) {
     orderBy: { date: "desc" },
     take: 5,
   });
-  return workouts.map(({ userId: _, ...workout }) => workout);
+  return workouts.reverse().map(workoutLine);
 }
 
-/** Logged sets from the last 7 days, one compact line per exercise per day (for next-week adjustments). */
+/** Everything logged in the last 7 days (for next-week adjustments). */
 async function loggedLastWeek(userId) {
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const workouts = await prisma.workout.findMany({
@@ -77,18 +85,12 @@ async function loggedLastWeek(userId) {
     orderBy: { date: "asc" },
     take: 60,
   });
-  return workouts.map((w) => {
-    const day = new Date(w.date).toISOString().slice(0, 10);
-    const sets = w.sets.map((x) => (x.weight ? `${x.weight}×${x.reps}` : `${x.reps}`)).join(", ");
-    return `${day} ${w.exercise}: ${sets}`;
-  });
+  return workouts.map(workoutLine);
 }
 
-/** "Push Pull Legs 2": the split's name (or "My Plan"), numbered after the first plan. */
-function planNameFor(criteria, existingPlans) {
-  const base = criteria.splitPreference
-    ? criteria.splitPreference.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
-    : "My Plan";
+/** "Push Pull Legs 2": the split's name, numbered after the first plan. */
+function planNameFor(split, existingPlans) {
+  const base = SPLIT_NAMES[split] ?? "My Plan";
   return existingPlans === 0 ? base : `${base} ${existingPlans + 1}`;
 }
 
@@ -109,14 +111,26 @@ const getPlan = findOwnPlan;
 /* ─────────────────────────────────────────────────────────────
    Generate
 ───────────────────────────────────────────────────────────── */
+/**
+ * A new plan, written one week at a time: this makes week 1 on the server's
+ * schedule (planSchedule), and "next week" adds each week after it.
+ */
 async function generatePlan(user, criteria = {}) {
-  const prompt = buildGeneratePlanPrompt(anonymizeIronArcProfile(user), await recentWorkouts(user.id), criteria);
-  const reply = await askAi(prompt, { unavailable: "Couldn't build your plan right now. Please try again in a moment." });
+  const settings = planSettings(user, criteria);
+  const prompt = buildFirstWeekPrompt(anonymizeIronArcProfile(user), settings, await recentWorkouts(user.id));
+  // One week of sessions fits well inside 4,000 tokens; the prompt plus this cap stays under Groq's per-minute limit.
+  const reply = await askAi(prompt, { maxTokens: 4000, unavailable: "Couldn't build your plan right now. Please try again in a moment." });
 
+  const days = assembleWeek(settings.schedule, reply?.days, settings.minutes);
   let planData;
   try {
-    planData = validateAndSanitizePlan(reply, equipmentOf(user, criteria));
-  } catch {
+    if (!days) throw new Error("the reply is missing a session");
+    planData = validateAndSanitizePlan(
+      { planExplanation: reply.planExplanation, totalWeeks: settings.totalWeeks, weeks: [{ week: 1, isDeloadWeek: false, days }] },
+      equipmentTagsFor(settings.equipment),
+    );
+  } catch (error) {
+    console.warn(`[generate] AI returned an unusable week: ${error.message}`);
     throw new HttpError(503, "Could not generate a valid plan. Please try again.");
   }
 
@@ -126,7 +140,7 @@ async function generatePlan(user, criteria = {}) {
     // Append-only log for the "plans generated" badges (plans themselves can be deleted).
     await tx.planGeneration.create({ data: { userId: user.id } });
     return tx.plan.create({
-      data: { userId: user.id, name: planNameFor(criteria, existingPlans), criteria, planData, isActive: true, weekNumber: 1 },
+      data: { userId: user.id, name: planNameFor(settings.split, existingPlans), criteria, planData, isActive: true, weekNumber: 1 },
     });
   });
 
@@ -138,21 +152,26 @@ async function generatePlan(user, criteria = {}) {
    Next week
 ───────────────────────────────────────────────────────────── */
 /**
- * Moves the plan to its next week and tunes that week to what the user
- * logged in the last 7 days. Later weeks stay as planned.
+ * Moves the plan to its next week, written from this week and tuned to what
+ * the user logged in the last 7 days. (Plans made before weekly generation
+ * already hold every week; their next week is tuned the same way.)
  */
 async function recalibratePlan(user, planId) {
   const plan = await findOwnPlan(user.id, planId);
   const current = plan.weekNumber || 1;
-  if (current >= (plan.planData?.weeks?.length ?? 1)) {
+  const totalWeeks = planLength(plan.planData);
+  if (current >= totalWeeks) {
     throw new HttpError(409, "You're on the last week of this plan. Generate a new plan to keep progressing.");
   }
   const next = current + 1;
-  const planOnly = withoutChat(plan.planData);
+  const planOnly = withNextWeek(withoutChat(plan.planData), next);
   const equipment = equipmentOf(user, plan.criteria);
 
   const prompt = buildNextWeekPrompt(compactWeek(planOnly, current), compactWeek(planOnly, next), await loggedLastWeek(user.id), anonymizeIronArcProfile(user), {
     weekNumber: current,
+    totalWeeks,
+    progression: planSettings(user, plan.criteria ?? {}).progression,
+    deload: isDeloadWeek(next),
     exerciseIds: allowedExerciseIds(equipment),
   });
   const reply = await askAi(prompt, {
@@ -269,7 +288,7 @@ async function chatWithPlan(user, planId, userMessage) {
   const equipment = equipmentOf(user, plan.criteria);
 
   const prompt = buildPlanChatPrompt(compactWeek(planOnly, plan.weekNumber), history, userMessage, anonymizeIronArcProfile(user), {
-    weeks: planOnly.weeks?.length ?? 0,
+    weeks: planLength(planOnly),
     weekNumber: plan.weekNumber,
     exerciseIds: allowedExerciseIds(equipment),
   });
