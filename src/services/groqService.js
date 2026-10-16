@@ -102,6 +102,9 @@ async function callGroqWithRetry(prompt, maxRetries = 2, options = {}) {
 ───────────────────────────────────────────────────────────── */
 
 const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+/** How a session flows; the validator also sorts by these tiers as a safety net. */
+const ORDER_RULE =
+  'Order each day like a real session: heavy compound lifts first (squat, deadlift, bench, overhead press, rows, pull-ups), then secondary compounds (dumbbell presses, pulldowns, leg press, lunges), then isolation (raises, curls, pushdowns, leg curls, calf raises), core and conditioning last. Finish every set of one exercise before the next.';
 const AVOID_LABELS = { knees: 'knees', lower_back: 'lower back', shoulders: 'shoulders', wrists: 'wrists' };
 const AVOID_RULES = {
   knees: 'Avoid jumps, deep lunges and very deep squats; prefer box squats, leg press with controlled range, hamstring and glute work.',
@@ -243,6 +246,7 @@ MANDATORY PLANNING RULES
 11. INTENSITY: ${intensityNote}
 ${priorityMuscles ? `12. PRIORITY MUSCLES: Add 1-2 extra sets for ${priorityMuscles.join(' and ')} compared to other muscle groups` : ''}
 ${avoidNote ? `12b. LIMITATIONS: ${avoidNote}\n` : ''}13. Never train the same muscle group on consecutive days
+13b. EXERCISE ORDER: ${ORDER_RULE}
 14. Include a planExplanation (3-4 sentences) explaining the split choice, progression logic, and how criteria were applied
 
 ═══════════════════════════════════════════════
@@ -292,43 +296,42 @@ No markdown. No code fences. No explanation outside the JSON.
 `;
 }
 
-function buildRecalibratePlanPrompt(anonymizedProfile, currentPlan, recentWorkouts) {
-  const completionRates = recentWorkouts.map(w => w.completionRate || 1);
-  const avgCompletion = completionRates.length > 0
-    ? completionRates.reduce((a, b) => a + b, 0) / completionRates.length
-    : 1;
+/**
+ * Next week, adjusted to what the user actually logged. Same compact week format as the
+ * coach chat so it fits the model's per-minute token limit.
+ */
+function buildNextWeekPrompt(thisWeek, nextWeek, logged, profile = {}, meta = {}) {
+  const profileSummary = [
+    profile.fitnessGoal && `Goal: ${profile.fitnessGoal}`,
+    profile.experienceLevel && `Experience: ${profile.experienceLevel}`,
+    profile.equipment && `Equipment: ${profile.equipment}`,
+  ].filter(Boolean).join(' · ') || 'Not provided';
 
-  return `
-You are an expert personal trainer recalibrating an Iron Arc user's workout plan.
+  return `You are a personal trainer preparing next week's sessions from what the user actually did this week.
 
-USER PROFILE:
-${JSON.stringify(anonymizedProfile, null, 2)}
+PROFILE: ${profileSummary}
+Short keys: d=day, t=rest, m=muscles, min=minutes, x=exercises with id, n=name, s=sets, r=reps, rest=seconds.
+THIS WEEK (week ${meta.weekNumber}) AS PLANNED:
+${JSON.stringify(thisWeek)}
 
-CURRENT PLAN SUMMARY:
-- Current week: ${currentPlan.weekNumber || 1}
-- Goal: ${anonymizedProfile.fitnessGoal}
+LOGGED IN THE LAST 7 DAYS (date, exercise: weight kg × reps per set):
+${logged.length > 0 ? logged.join('\n') : 'Nothing logged.'}
 
-RECENT PERFORMANCE (last 7 days):
-${JSON.stringify(recentWorkouts, null, 2)}
+NEXT WEEK (week ${meta.weekNumber + 1}) AS PLANNED:
+${JSON.stringify(nextWeek)}
 
-AVERAGE COMPLETION RATE: ${(avgCompletion * 100).toFixed(0)}%
+RULES:
+- Keep the same training days and split.
+- An exercise done with all its reps: progress it (one more rep in the range, or one more set if reps are at the top).
+- An exercise with missed reps or skipped: keep it the same or ease off one set.
+- Most of the week missed: reduce next week's volume about 15%.
+- ${ORDER_RULE}
+- Exercise ids only from: bench_press, dumbbell_press, incline_press, push_up, overhead_press, db_shoulder_press, lateral_raise, tricep_dip, tricep_pushdown, pull_up, lat_pulldown, barbell_row, dumbbell_row, seated_cable_row, bicep_curl, db_bicep_curl, squat, goblet_squat, bodyweight_squat, deadlift, rdl, leg_press, lunge, leg_curl, calf_raise, plank, crunch, leg_raise, russian_twist, jump_rope, burpee, mountain_climber.
+- "modifiedDays": next week, all 7 days Monday to Sunday in the same short-key format, rest days as {"d":"<day>","t":"rest"}. Use null if next week is right as planned.
+- "message": 1–3 friendly sentences on what you changed for next week and why, based on the log.
 
-RECALIBRATION RULES:
-- Completion > 90% AND no excessive fatigue reported → increase load or volume by 5-10%
-- Completion < 70% OR high fatigue reported → reduce volume by 10-15%
-- Any injury flag → remove affected exercises and substitute immediately
-- Maintain the same weekly split structure unless completion < 50% (then simplify)
-- Always include a recalibrationExplanation explaining what changed and why
-
-VALID EXERCISE IDs — ONLY USE THESE:
-bench_press, dumbbell_press, incline_press, push_up, overhead_press, db_shoulder_press,
-lateral_raise, tricep_dip, tricep_pushdown, pull_up, lat_pulldown, barbell_row,
-dumbbell_row, seated_cable_row, bicep_curl, db_bicep_curl, squat, goblet_squat,
-bodyweight_squat, deadlift, rdl, leg_press, lunge, leg_curl, calf_raise,
-plank, crunch, leg_raise, russian_twist, jump_rope, burpee, mountain_climber
-
-Return ONLY valid JSON in the exact same structure as the plan format. No markdown. No code fences.
-`;
+Return ONLY this JSON, no markdown:
+{"message": "...", "modifiedDays": null}`;
 }
 
 function buildSubstitutePrompt(exerciseId, reason, anonymizedProfile) {
@@ -347,8 +350,10 @@ bodyweight_squat, deadlift, rdl, leg_press, lunge, leg_curl, calf_raise,
 plank, crunch, leg_raise, russian_twist, jump_rope, burpee, mountain_climber
 
 Rules:
+- Must be a DIFFERENT exercise from the one being replaced
 - Same primary muscle group
-- No equipment required if possible, or common gym equipment
+- Respect the reason (e.g. "no barbell" → dumbbells, cables or machines; "hurts my shoulder" → a gentler option)
+- Common gym equipment is fine
 - Appropriate difficulty for the user's goal
 - MUST use an exerciseId from the valid list above
 
@@ -411,6 +416,7 @@ RULES:
 - To CHANGE the plan (days, exercises, sets, reps, rest, session length): return the full week in the same short-key format as "modifiedDays", all 7 days Monday to Sunday, rest days as {"d":"<day>","t":"rest"}. It replaces this week and the weeks after it.
 - To ANSWER a question (technique, nutrition, motivation): return "modifiedDays": null.
 - Never train the same muscle group on consecutive days. Keep sessions within the minutes given.
+- ${ORDER_RULE}
 - Exercise ids only from: bench_press, dumbbell_press, incline_press, push_up, overhead_press, db_shoulder_press, lateral_raise, tricep_dip, tricep_pushdown, pull_up, lat_pulldown, barbell_row, dumbbell_row, seated_cable_row, bicep_curl, db_bicep_curl, squat, goblet_squat, bodyweight_squat, deadlift, rdl, leg_press, lunge, leg_curl, calf_raise, plank, crunch, leg_raise, russian_twist, jump_rope, burpee, mountain_climber.
 - "message": 1–3 friendly sentences, like a real coach, saying what you changed or answering.
 
@@ -421,7 +427,7 @@ Return ONLY this JSON, no markdown:
 module.exports = {
   callGroqWithRetry,
   buildGeneratePlanPrompt,
-  buildRecalibratePlanPrompt,
+  buildNextWeekPrompt,
   buildSubstitutePrompt,
   buildPlanChatPrompt,
 };

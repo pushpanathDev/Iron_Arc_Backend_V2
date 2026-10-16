@@ -65,13 +65,18 @@ function expandDays(shortDays, previousDays = []) {
   return DAY_ORDER.map((key) => days.find((d) => d.day === key) || byDay.get(key) || { day: key, sessionType: "rest", recoveryNote: "Rest and recover." });
 }
 
-/** Apply the coach's changed week to the current week and every week after it (earlier weeks are history). */
-function applyWeekChange(planData, weekNumber, shortDays) {
+/**
+ * Apply the coach's changed week to the current week and every week after it (earlier weeks are history).
+ * `onlyThisWeek` (next-week adjustments) leaves the later weeks as planned.
+ */
+function applyWeekChange(planData, weekNumber, shortDays, { onlyThisWeek = false } = {}) {
   const weeks = Array.isArray(planData?.weeks) ? planData.weeks : [];
   const from = currentWeekIndex(planData, weekNumber);
   return {
     ...planData,
-    weeks: weeks.map((week, i) => (i < from ? week : { ...week, days: expandDays(shortDays, week.days || []) })),
+    weeks: weeks.map((week, i) =>
+      i < from || (onlyThisWeek && i > from) ? week : { ...week, days: expandDays(shortDays, week.days || []) },
+    ),
   };
 }
 

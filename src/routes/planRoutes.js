@@ -48,37 +48,6 @@ router.post('/generate', verifyFirebaseToken, requireEmailVerified, planGenerati
   }
 });
 
-/* ── POST /api/plans/recalibrate (legacy — recalibrates the active plan) */
-router.post('/recalibrate', verifyFirebaseToken, requireEmailVerified, planGenerationLimiter, async (req, res, next) => {
-  try {
-    const plans = await listPlans(req.user.uid);
-    const active = plans.find((p) => p.isActive) ?? plans[0];
-    if (!active) {
-      return res.status(404).json({ success: false, message: 'No active plan found. Generate a plan first.' });
-    }
-    const plan = await recalibratePlan(req.user.uid, active.id);
-    res.status(200).json({ success: true, data: plan });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/* ── POST /api/plans/substitute (legacy — substitutes in the active plan) */
-router.post('/substitute', verifyFirebaseToken, requireEmailVerified, validate(substituteSchema), async (req, res, next) => {
-  try {
-    const { exerciseId, reason } = req.body;
-    const plans = await listPlans(req.user.uid);
-    const active = plans.find((p) => p.isActive) ?? plans[0];
-    if (!active) {
-      return res.status(404).json({ success: false, message: 'No active plan found.' });
-    }
-    const result = await substituteExercise(req.user.uid, active.id, exerciseId, reason);
-    res.status(200).json({ success: true, data: result });
-  } catch (error) {
-    next(error);
-  }
-});
-
 /* ── GET /api/plans/:id ─────────────────────────────────────────────────
    Get a specific plan by ID
 ────────────────────────────────────────────────────────────────────────── */
@@ -95,7 +64,7 @@ router.get('/:id', verifyFirebaseToken, async (req, res, next) => {
 });
 
 /* ── POST /api/plans/:id/recalibrate ────────────────────────────────────
-   Recalibrate a specific plan
+   Next week: move the plan on a week, tuned to the last 7 days of training
 ────────────────────────────────────────────────────────────────────────── */
 router.post('/:id/recalibrate', verifyFirebaseToken, requireEmailVerified, planGenerationLimiter, async (req, res, next) => {
   try {
@@ -104,6 +73,12 @@ router.post('/:id/recalibrate', verifyFirebaseToken, requireEmailVerified, planG
   } catch (error) {
     if (error.message === 'PLAN_NOT_FOUND') {
       return res.status(404).json({ success: false, message: 'Plan not found.' });
+    }
+    if (error.message === 'PLAN_FINISHED') {
+      return res.status(409).json({ success: false, message: "You're on the last week of this plan. Generate a new plan to keep progressing." });
+    }
+    if (error.message === 'AI_UNAVAILABLE') {
+      return res.status(503).json({ success: false, message: "The coach couldn't prepare next week right now. Please try again in a moment." });
     }
     next(error);
   }
@@ -127,6 +102,9 @@ router.post('/:id/substitute', verifyFirebaseToken, requireEmailVerified, valida
   } catch (error) {
     if (error.message === 'PLAN_NOT_FOUND') {
       return res.status(404).json({ success: false, message: 'Plan not found.' });
+    }
+    if (error.message === 'AI_UNAVAILABLE') {
+      return res.status(503).json({ success: false, message: "Couldn't find a replacement right now. Please try again in a moment." });
     }
     next(error);
   }

@@ -1,4 +1,4 @@
-const { isValidExerciseId, getSubstituteExerciseId } = require('./exerciseDatabase');
+const { isValidExerciseId, getSubstituteExerciseId, exerciseOrderTier } = require('./exerciseDatabase');
 
 /**
  * Validates and sanitizes the JSON plan returned by Groq before
@@ -10,6 +10,8 @@ const { isValidExerciseId, getSubstituteExerciseId } = require('./exerciseDataba
  * - Negative sets/reps → corrected to minimum safe values
  * - More than 8 exercises in one session → trimmed (volume safety)
  * - Missing optional fields → safe defaults applied
+ * - Exercises in training order: big compound lifts first, isolation and core last
+ *   (stable, so the AI's order is kept within each tier)
  */
 function validateAndSanitizePlan(rawPlan, availableEquipment = []) {
   if (!rawPlan || !rawPlan.weeks || !Array.isArray(rawPlan.weeks)) {
@@ -61,8 +63,14 @@ function validateAndSanitizePlan(rawPlan, availableEquipment = []) {
                 substitutes: Array.isArray(ex.substitutes)
                   ? ex.substitutes.filter(s => isValidExerciseId(s))
                   : [],
+                // Keep the swap trail ("Swapped from …") through later edits.
+                ...(ex.substitutedFrom ? { substitutedFrom: ex.substitutedFrom } : {}),
+                ...(ex.substitutionReason ? { substitutionReason: ex.substitutionReason } : {}),
               };
-            }),
+            })
+            .map((ex, i) => ({ ex, i }))
+            .sort((a, b) => exerciseOrderTier(a.ex.exerciseId) - exerciseOrderTier(b.ex.exerciseId) || a.i - b.i)
+            .map(({ ex }) => ex),
         };
       }),
     })),

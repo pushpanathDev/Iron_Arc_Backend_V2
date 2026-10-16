@@ -98,4 +98,21 @@ function getSubstituteExerciseId(originalId, availableEquipment = []) {
   return candidates.length > 0 ? candidates[0][0] : 'push_up';
 }
 
-module.exports = { EXERCISE_DB, isValidExerciseId, getSubstituteExerciseId };
+/*
+ * Training order within a session: heavy compound lifts first, then
+ * secondary compounds, then isolation work, then core and conditioning.
+ */
+const ORDER_TIERS = {
+  1: ["squat", "deadlift", "bench_press", "incline_press", "overhead_press", "barbell_row", "pull_up"],
+  2: ["dumbbell_press", "db_shoulder_press", "push_up", "tricep_dip", "lat_pulldown", "dumbbell_row", "seated_cable_row", "rdl", "leg_press", "goblet_squat", "lunge", "bodyweight_squat"],
+  3: ["lateral_raise", "tricep_pushdown", "bicep_curl", "db_bicep_curl", "leg_curl", "calf_raise"],
+  4: ["plank", "crunch", "leg_raise", "russian_twist", "jump_rope", "burpee", "mountain_climber"],
+};
+const ORDER_OF = new Map(Object.entries(ORDER_TIERS).flatMap(([tier, ids]) => ids.map((id) => [id, Number(tier)])));
+
+/** 1 (big compound) … 4 (core/conditioning); unknown exercises sit with isolation work. */
+function exerciseOrderTier(id) {
+  return ORDER_OF.get(id) ?? 3;
+}
+
+module.exports = { EXERCISE_DB, isValidExerciseId, getSubstituteExerciseId, exerciseOrderTier };
