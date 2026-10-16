@@ -91,6 +91,8 @@ const renamePlanSchema = z.object({
 
 const planChatSchema = z.object({
   message: z.string().trim().min(1, "Message is required.").max(1000, "Message is too long (max 1000 characters)."),
+  // The user's own date, so the coach knows where in the week they are. Older apps don't send it.
+  today: isoDate.optional(),
 });
 
 function validate(schema) {

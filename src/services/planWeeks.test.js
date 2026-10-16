@@ -135,9 +135,42 @@ test("the last week of the plan is a 409, as before", async () => {
 test("the coach sees the last 7 days of the log", async () => {
   aiReply = { planExplanation: "x", days: ["monday", "tuesday", "wednesday"].map((day) => ({ day, exercises: [ex("squat", "Barbell Squat")] })) };
   await generatePlan(user, { splitPreference: "push_pull_legs" });
-  workouts = [{ date: new Date("2026-10-13T00:00:00Z"), exercise: "Barbell Squat", sets: [{ weight: 100, reps: 5 }, { weight: 100, reps: 4 }] }];
+  workouts = [{ date: new Date("2026-10-13T00:00:00Z"), createdAt: new Date(), exercise: "Barbell Squat", sets: [{ weight: 100, reps: 5 }, { weight: 100, reps: 4 }] }];
   const { chatWithPlan } = require("./planningService");
   aiReply = { message: "Solid week: squats nearly all there.", modifiedDays: null };
-  await chatWithPlan(user, "plan-1", "How did my week go?");
-  assert.match(prompts.at(-1), /LOGGED IN THE LAST 7 DAYS[^]*2026-10-13 Barbell Squat: 100×5, 100×4/);
+  await chatWithPlan(user, "plan-1", "How did my week go?", "2026-10-16");
+  const prompt = prompts.at(-1);
+  assert.match(prompt, /TODAY: Fri 2026-10-16/);
+  assert.match(prompt, /EACH WEEK: Push ×2, Pull ×2, Legs ×2 \(6 training days\)/);
+  assert.match(prompt, /THIS WEEK SO FAR \(week 1, started \w{3} \d{4}-\d{2}-\d{2}\):/);
+  // The squat was logged on Tuesday, a Pull day, so no Legs day counts it.
+  assert.ok(
+    prompt.includes(
+      [
+        "Mon 2026-10-12 · Push: not logged",
+        "Tue 2026-10-13 · Pull: not logged",
+        "Wed 2026-10-14 · Legs: not logged",
+        "Thu 2026-10-15 · Push: not logged",
+        "Fri 2026-10-16 · Pull: not logged yet (today)",
+        "Sat 2026-10-17 · Legs: coming up",
+      ].join("\n"),
+    ),
+  );
+  assert.match(prompt, /LOGGED IN THE LAST 7 DAYS[^]*Tue 2026-10-13 Barbell Squat: 100×5, 100×4/);
+  assert.match(prompt, /Never say a session was done unless it's logged/);
+});
+
+test("moving on mid-week starts the new week with nothing done", async () => {
+  aiReply = { planExplanation: "x", days: ["monday", "tuesday", "wednesday"].map((day) => ({ day, exercises: [ex("bench_press", "Barbell Bench Press")] })) };
+  await generatePlan(user, { splitPreference: "push_pull_legs" });
+  // Monday's Push, saved during week 1.
+  workouts = [{ date: new Date("2026-10-12T00:00:00Z"), createdAt: new Date(Date.now() - 60_000), exercise: "Barbell Bench Press", sets: [{ weight: 60, reps: 10 }] }];
+  aiReply = { message: "ok", modifiedDays: null };
+  await recalibratePlan(user, "plan-1");
+  assert.ok(storedPlan.planData.weekStartedAt, "week 2 knows when it started");
+
+  const { chatWithPlan } = require("./planningService");
+  await chatWithPlan(user, "plan-1", "How did my week go?", "2026-10-16");
+  assert.match(prompts.at(-1), /Mon 2026-10-12 · Push: not logged\n/, "week 1's workout doesn't count for week 2");
+  assert.match(prompts.at(-1), /LOGGED IN THE LAST 7 DAYS[^]*Mon 2026-10-12 Barbell Bench Press/, "but it's still in the log");
 });

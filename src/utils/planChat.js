@@ -7,6 +7,8 @@
  * (newest last), so a plan and its conversation are saved together.
  */
 
+const { addDays, weekdayOf, withWeekday } = require("./dates");
+
 const WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const CHAT_HISTORY_MAX = 40;
 
@@ -54,12 +56,17 @@ function expandDays(shortDays, previousDays = []) {
         estimatedDurationMinutes: Number(d.min) || byDay.get(key)?.estimatedDurationMinutes || 45,
         exercises: d.x.map((x) => {
           const kept = before.get(x.id) || {};
+          const sets = Number(x.s) || kept.sets || 3;
+          const reps = String(x.r ?? kept.reps ?? "8-12");
+          // Its note was written for the old sets and reps; the validator writes a fitting one.
+          const { progressionNote, ...rest } = kept;
+          const unchanged = sets === kept.sets && reps === String(kept.reps);
           return {
-            ...kept,
+            ...(unchanged ? kept : rest),
             exerciseId: x.id || kept.exerciseId,
             name: x.n || kept.name,
-            sets: Number(x.s) || kept.sets || 3,
-            reps: String(x.r ?? kept.reps ?? "8-12"),
+            sets,
+            reps,
             restSeconds: Number(x.rest) || kept.restSeconds || 90,
           };
         }),
@@ -82,6 +89,41 @@ function applyWeekChange(planData, weekNumber, shortDays, { onlyThisWeek = false
       i < from || (onlyThisWeek && i > from) ? week : { ...week, days: expandDays(shortDays, week.days || []) },
     ),
   };
+}
+
+const matchKey = (name) => String(name).toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/**
+ * The plan's current week on this calendar week, one line per training day,
+ * so the coach talks about what really happened, e.g.
+ *   "Mon 2026-10-12 · Push: logged (6 of 7 exercises)"
+ *   "Tue 2026-10-13 · Pull: not logged"
+ *   "Sat 2026-10-17 · Legs: coming up"
+ * A day counts an exercise as logged when one with its name was saved on that date,
+ * after this plan week started (`startedAt`, an ISO time): moving on to the next
+ * week mid-week starts with nothing done. `sessionName` names a day ("Push");
+ * `workouts` are { date: "YYYY-MM-DD", exercise, createdAt }.
+ */
+function weekSoFar(weekDays, workouts, today, sessionName, startedAt) {
+  const monday = addDays(today, -weekdayOf(today));
+  const loggedOn = new Map();
+  for (const w of workouts) {
+    if (startedAt && new Date(w.createdAt) < new Date(startedAt)) continue;
+    if (!loggedOn.has(w.date)) loggedOn.set(w.date, new Set());
+    loggedOn.get(w.date).add(matchKey(w.exercise));
+  }
+
+  return WEEKDAYS.flatMap((key, i) => {
+    const day = (weekDays ?? []).find((d) => d.day?.toLowerCase() === key);
+    if (!day || day.sessionType === "rest" || !(day.exercises?.length > 0)) return [];
+    const date = addDays(monday, i);
+    const label = `${withWeekday(date)} · ${sessionName(day)}`;
+    if (date > today) return [`${label}: coming up`];
+    const logged = loggedOn.get(date);
+    const done = day.exercises.filter((e) => logged?.has(matchKey(e.name ?? "")) || logged?.has(matchKey(e.exerciseId ?? ""))).length;
+    if (done > 0) return [`${label}: logged (${done} of ${day.exercises.length} exercises)`];
+    return [`${label}: ${date === today ? "not logged yet (today)" : "not logged"}`];
+  });
 }
 
 /** The coach's days if the AI changed the week, else null. */
@@ -107,6 +149,7 @@ function withChat(plan, history, newEntries) {
 
 module.exports = {
   WEEKDAYS,
+  weekSoFar,
   currentWeekIndex,
   compactWeek,
   expandDays,

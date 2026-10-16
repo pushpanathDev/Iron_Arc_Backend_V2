@@ -4,6 +4,10 @@
  * a session. The app has its own, larger exercise list; this one only has to
  * cover what plans use.
  *
+ * name: the one name a plan ever shows, whatever the AI wrote. It must match
+ * the app's exercise catalogue (data/exercises.ts) exactly: the app finds
+ * past sets, done days and the "Chest · Barbell" label by name.
+ *
  * order: where it goes in a session. 1 heavy compound lifts, 2 secondary
  * compounds, 3 isolation, 4 core and conditioning.
  * equipment: what it needs (see EQUIPMENT_TAGS); none means bodyweight.
@@ -12,44 +16,44 @@ const EXERCISE_DB = {
   // ── Push (Chest / Shoulders / Triceps) ──────────────────────────────
   bench_press:       { name: "Barbell Bench Press",     order: 1, muscles: ["chest", "triceps", "shoulders"], equipment: ["barbell"] },
   dumbbell_press:    { name: "Dumbbell Bench Press",    order: 2, muscles: ["chest", "triceps"],              equipment: ["dumbbells"] },
-  incline_press:     { name: "Incline Barbell Press",   order: 1, muscles: ["chest", "shoulders"],            equipment: ["barbell"] },
-  push_up:           { name: "Push Up",                 order: 2, muscles: ["chest", "triceps"],              equipment: [] },
-  overhead_press:    { name: "Overhead Press",          order: 1, muscles: ["shoulders", "triceps"],          equipment: ["barbell"] },
+  incline_press:     { name: "Incline Barbell Bench Press", order: 1, muscles: ["chest", "shoulders"],            equipment: ["barbell"] },
+  push_up:           { name: "Push Ups",                order: 2, muscles: ["chest", "triceps"],              equipment: [] },
+  overhead_press:    { name: "Barbell Overhead Press",  order: 1, muscles: ["shoulders", "triceps"],          equipment: ["barbell"] },
   db_shoulder_press: { name: "Dumbbell Shoulder Press", order: 2, muscles: ["shoulders", "triceps"],          equipment: ["dumbbells"] },
   lateral_raise:     { name: "Lateral Raise",           order: 3, muscles: ["shoulders"],                     equipment: ["dumbbells"] },
-  tricep_dip:        { name: "Tricep Dip",              order: 2, muscles: ["triceps", "chest"],              equipment: [] },
+  tricep_dip:        { name: "Dips (Triceps)",          order: 2, muscles: ["triceps", "chest"],              equipment: [] },
   tricep_pushdown:   { name: "Tricep Pushdown",         order: 3, muscles: ["triceps"],                       equipment: ["cables"] },
 
   // ── Pull (Back / Biceps) ─────────────────────────────────────────────
-  pull_up:           { name: "Pull Up",                 order: 1, muscles: ["back", "biceps"],                equipment: ["pull_up_bar"] },
+  pull_up:           { name: "Pull Ups",                order: 1, muscles: ["back", "biceps"],                equipment: ["pull_up_bar"] },
   lat_pulldown:      { name: "Lat Pulldown",            order: 2, muscles: ["back", "biceps"],                equipment: ["cables"] },
   barbell_row:       { name: "Barbell Row",             order: 1, muscles: ["back", "biceps"],                equipment: ["barbell"] },
   dumbbell_row:      { name: "Dumbbell Row",            order: 2, muscles: ["back"],                          equipment: ["dumbbells"] },
   seated_cable_row:  { name: "Seated Cable Row",        order: 2, muscles: ["back", "biceps"],                equipment: ["cables"] },
-  bicep_curl:        { name: "Barbell Bicep Curl",      order: 3, muscles: ["biceps"],                        equipment: ["barbell"] },
-  db_bicep_curl:     { name: "Dumbbell Bicep Curl",     order: 3, muscles: ["biceps"],                        equipment: ["dumbbells"] },
+  bicep_curl:        { name: "Barbell Curl",            order: 3, muscles: ["biceps"],                        equipment: ["barbell"] },
+  db_bicep_curl:     { name: "Dumbbell Curl",           order: 3, muscles: ["biceps"],                        equipment: ["dumbbells"] },
 
   // ── Legs ─────────────────────────────────────────────────────────────
-  squat:             { name: "Barbell Squat",           order: 1, muscles: ["quads", "glutes", "hamstrings"], equipment: ["barbell"] },
+  squat:             { name: "Barbell Back Squat",      order: 1, muscles: ["quads", "glutes", "hamstrings"], equipment: ["barbell"] },
   goblet_squat:      { name: "Goblet Squat",            order: 2, muscles: ["quads", "glutes"],               equipment: ["dumbbells"] },
   bodyweight_squat:  { name: "Bodyweight Squat",        order: 2, muscles: ["quads", "glutes"],               equipment: [] },
   deadlift:          { name: "Deadlift",                order: 1, muscles: ["hamstrings", "glutes", "back"],  equipment: ["barbell"] },
   rdl:               { name: "Romanian Deadlift",       order: 2, muscles: ["hamstrings", "glutes"],          equipment: ["barbell"] },
   leg_press:         { name: "Leg Press",               order: 2, muscles: ["quads", "glutes"],               equipment: ["machines"] },
-  lunge:             { name: "Dumbbell Lunge",          order: 2, muscles: ["quads", "glutes"],               equipment: ["dumbbells"] },
-  leg_curl:          { name: "Leg Curl",                order: 3, muscles: ["hamstrings"],                    equipment: ["machines"] },
-  calf_raise:        { name: "Calf Raise",              order: 3, muscles: ["calves"],                        equipment: [] },
+  lunge:             { name: "Walking Lunges",          order: 2, muscles: ["quads", "glutes"],               equipment: ["dumbbells"] },
+  leg_curl:          { name: "Lying Leg Curl",          order: 3, muscles: ["hamstrings"],                    equipment: ["machines"] },
+  calf_raise:        { name: "Standing Calf Raise",     order: 3, muscles: ["calves"],                        equipment: [] },
 
   // ── Core ─────────────────────────────────────────────────────────────
   plank:             { name: "Plank",                   order: 4, muscles: ["core"],                          equipment: [] },
-  crunch:            { name: "Crunch",                  order: 4, muscles: ["core"],                          equipment: [] },
+  crunch:            { name: "Crunches",                order: 4, muscles: ["core"],                          equipment: [] },
   leg_raise:         { name: "Leg Raise",               order: 4, muscles: ["core"],                          equipment: [] },
   russian_twist:     { name: "Russian Twist",           order: 4, muscles: ["core"],                          equipment: [] },
 
   // ── Cardio / Conditioning ─────────────────────────────────────────────
   jump_rope:         { name: "Jump Rope",               order: 4, muscles: [],                                equipment: ["jump_rope"] },
-  burpee:            { name: "Burpee",                  order: 4, muscles: ["full_body"],                     equipment: [] },
-  mountain_climber:  { name: "Mountain Climber",        order: 4, muscles: ["core", "full_body"],             equipment: [] },
+  burpee:            { name: "Burpees",                 order: 4, muscles: ["full_body"],                     equipment: [] },
+  mountain_climber:  { name: "Mountain Climbers",       order: 4, muscles: ["core", "full_body"],             equipment: [] },
 };
 
 function isValidExerciseId(id) {

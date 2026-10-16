@@ -162,8 +162,10 @@ Return ONLY valid JSON:
  *                   "x": [{ "id": "bench_press", "n": "Barbell Bench Press", "s": 4, "r": "6-8", "rest": 90 }] }
  */
 /**
- * meta: { weeks, weekNumber, logged, exerciseIds }: logged is the last 7 days of
- * workouts, one line each, so the coach can answer "how did my week go?".
+ * meta: { weeks, weekNumber, today, weekSoFar, logged, exerciseIds }. today is
+ * "Fri 2026-10-16"; weekSoFar is one line per training day of this week (logged,
+ * not logged, coming up); logged is the last 7 days of workouts. Together they
+ * let the coach answer "how did my week go?" with what really happened.
  */
 function buildPlanChatPrompt(weekDays, history = [], userMessage, profile = {}, meta = {}) {
   const recentHistory = history.slice(-6);
@@ -185,6 +187,13 @@ PROFILE: ${profileSummary}
 PLAN: ${meta.weeks || 1} week(s); the user is on week ${meta.weekNumber || 1}. This is that week (short keys: d=day, t=rest, m=muscles, min=minutes, x=exercises with id, n=name, s=sets, r=reps, rest=seconds):
 ${JSON.stringify(weekDays)}
 
+TODAY: ${meta.today ?? "unknown"}
+
+EACH WEEK: ${meta.sessionsPerWeek ?? "see the week above"}
+
+THIS WEEK SO FAR (week ${meta.weekNumber || 1}${meta.weekStartedOn ? `, started ${meta.weekStartedOn}` : ""}):
+${meta.weekSoFar?.length > 0 ? meta.weekSoFar.join("\n") : "No training days this week."}
+
 LOGGED IN THE LAST 7 DAYS (date, exercise: weight kg × reps per set):
 ${meta.logged?.length > 0 ? meta.logged.join("\n") : "Nothing logged."}
 
@@ -196,6 +205,8 @@ USER: "${userMessage}"
 RULES:
 - To CHANGE the plan (days, exercises, sets, reps, rest, session length): return the full week in the same short-key format as "modifiedDays", all 7 days Monday to Sunday, rest days as {"d":"<day>","t":"rest"}. It replaces this week and the weeks after it.
 - To ANSWER a question (technique, nutrition, motivation): return "modifiedDays": null.
+- About the user's own training, say only what THIS WEEK SO FAR and the log show. Never say a session was done unless it's logged; if the week isn't over, talk about it as in progress, and name what's still to come.
+- If this plan week has only just started and nothing is logged in it yet, a question about "my week" is about the last 7 days in the log.
 - Never train the same muscle group on consecutive days. Keep sessions within the minutes given.
 - ${ORDER_RULE}
 - Exercise ids only from: ${meta.exerciseIds.join(", ")}.

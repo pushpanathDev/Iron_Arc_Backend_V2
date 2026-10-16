@@ -56,7 +56,7 @@ router.delete("/:id", requireEmailVerified, async (req, res) => {
 
 // A message to the plan coach: an answer, and maybe a change to the plan.
 router.post("/:id/chat", requireEmailVerified, validate(planChatSchema), planChatLimiter, async (req, res) => {
-  const result = await planningService.chatWithPlan(req.user.dbUser, req.params.id, req.body.message);
+  const result = await planningService.chatWithPlan(req.user.dbUser, req.params.id, req.body.message, req.body.today);
   res.json({ success: true, data: result });
 });
 

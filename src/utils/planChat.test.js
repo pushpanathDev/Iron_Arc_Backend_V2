@@ -1,6 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { compactWeek, expandDays, applyWeekChange } = require("./planChat");
+const { compactWeek, expandDays, applyWeekChange, weekSoFar } = require("./planChat");
+const { dayShortName } = require("./planDiff");
 
 const bench = { exerciseId: "bench_press", name: "Barbell Bench Press", sets: 4, reps: "6-8", restSeconds: 90, progressionNote: "Add 2.5 kg", substitutes: ["dumbbell_press"] };
 const squat = { exerciseId: "squat", name: "Barbell Squat", sets: 4, reps: "5", restSeconds: 120 };
@@ -40,11 +41,39 @@ test("expanded days: all 7 weekdays in order", () => {
   ]);
 });
 
-test("a kept exercise keeps its note and substitutes; a rest day keeps its recovery note", () => {
+test("an exercise whose sets or reps changed drops its old note; an unchanged one keeps it", () => {
   const days = expandDays(changed, week(1).days);
-  const kept = days[0].exercises[0];
-  assert.deepEqual([kept.progressionNote, kept.substitutes, kept.sets], ["Add 2.5 kg", ["dumbbell_press"], 3]);
-  assert.equal(days[1].recoveryNote, "Walk");
+  const benchChanged = days[0].exercises[0];
+  assert.deepEqual([benchChanged.sets, "progressionNote" in benchChanged, benchChanged.substitutes], [3, false, ["dumbbell_press"]]);
+
+  const same = expandDays([{ d: "monday", m: ["chest"], min: 60, x: [{ id: "bench_press", n: "Barbell Bench Press", s: 4, r: "6-8", rest: 90 }] }], week(1).days);
+  assert.equal(same[0].exercises[0].progressionNote, "Add 2.5 kg");
+});
+
+test("a rest day keeps its recovery note", () => {
+  assert.equal(expandDays(changed, week(1).days)[1].recoveryNote, "Walk");
+});
+
+test("this week so far: logged, not logged, today and coming up", () => {
+  // Friday 16 Oct 2026; Monday is the 12th.
+  const days = [
+    { day: "monday", sessionType: "training", targetMuscles: ["chest", "triceps"], exercises: [{ exerciseId: "bench_press", name: "Barbell Bench Press" }, { exerciseId: "push_up", name: "Push Ups" }] },
+    { day: "tuesday", sessionType: "training", targetMuscles: ["back", "biceps"], exercises: [{ exerciseId: "pull_up", name: "Pull Ups" }] },
+    { day: "friday", sessionType: "training", targetMuscles: ["back", "biceps"], exercises: [{ exerciseId: "pull_up", name: "Pull Ups" }] },
+    { day: "saturday", sessionType: "training", targetMuscles: ["quads", "glutes"], exercises: [{ exerciseId: "squat", name: "Barbell Back Squat" }] },
+    { day: "sunday", sessionType: "rest" },
+  ];
+  const logged = [
+    { date: "2026-10-12", exercise: "barbell bench press" },
+    { date: "2026-10-16", exercise: "Pull Ups" }, // Tuesday's Pull, done on Friday: Friday's
+  ];
+  assert.deepEqual(weekSoFar(days, logged, "2026-10-16", dayShortName), [
+    "Mon 2026-10-12 · Push: logged (1 of 2 exercises)",
+    "Tue 2026-10-13 · Pull: not logged",
+    "Fri 2026-10-16 · Pull: logged (1 of 1 exercises)",
+    "Sat 2026-10-17 · Legs: coming up",
+  ]);
+  assert.deepEqual(weekSoFar(days.slice(2, 3), [], "2026-10-16", dayShortName), ["Fri 2026-10-16 · Pull: not logged yet (today)"]);
 });
 
 test("a change applies to this week and the later ones; earlier weeks are history", () => {

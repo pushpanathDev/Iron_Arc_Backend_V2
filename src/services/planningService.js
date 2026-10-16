@@ -2,8 +2,9 @@ const { prisma } = require("../config/database");
 const { HttpError } = require("../utils/httpError");
 const { anonymizeIronArcProfile } = require("../utils/anonymizer");
 const { validateAndSanitizePlan } = require("../utils/planValidator");
-const { compactWeek, applyWeekChange, changedDays, chatOf, withoutChat, withChat } = require("../utils/planChat");
-const { diffPlanWeek } = require("../utils/planDiff");
+const { compactWeek, applyWeekChange, changedDays, chatOf, withoutChat, withChat, weekSoFar } = require("../utils/planChat");
+const { diffPlanWeek, dayShortName } = require("../utils/planDiff");
+const { dateKey, addDays, withWeekday } = require("../utils/dates");
 const { planHasExercise, exerciseNameIn, applySubstitution } = require("../utils/planSwap");
 const { EXERCISE_DB, equipmentTagsFor, allowedExerciseIds, getSubstituteExerciseId } = require("../utils/exerciseDatabase");
 const { buildFirstWeekPrompt, buildNextWeekPrompt, buildSubstitutePrompt, buildPlanChatPrompt } = require("../utils/planPrompts");
@@ -58,11 +59,10 @@ function equipmentOf(user, criteria) {
 
 const now = () => new Date().toISOString();
 
-/** A logged workout as one line for a prompt: "2026-10-14 Bench Press: 60×10, 62.5×8". */
+/** A logged workout as one line for a prompt: "Wed 2026-10-14 Bench Press: 60×10, 62.5×8". */
 function workoutLine(w) {
-  const day = new Date(w.date).toISOString().slice(0, 10);
   const sets = w.sets.map((x) => (x.weight ? `${x.weight}×${x.reps}` : `${x.reps}`)).join(", ");
-  return `${day} ${w.exercise}: ${sets}`;
+  return `${withWeekday(dateKey(new Date(w.date)))} ${w.exercise}: ${sets}`;
 }
 
 /** The last 5 workouts, oldest first, as context for a new plan. */
@@ -76,16 +76,27 @@ async function recentWorkouts(userId) {
   return workouts.reverse().map(workoutLine);
 }
 
-/** Everything logged in the last 7 days (for next-week adjustments). */
-async function loggedLastWeek(userId) {
-  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const workouts = await prisma.workout.findMany({
-    where: { userId, deletedAt: null, date: { gte: since } },
+/** Workouts from the 7 days up to `today` ("YYYY-MM-DD"), oldest first. */
+function workoutsOfLastWeek(userId, today) {
+  return prisma.workout.findMany({
+    where: { userId, deletedAt: null, date: { gte: new Date(`${addDays(today, -7)}T00:00:00Z`) } },
     include: { sets: { orderBy: { setNumber: "asc" } } },
     orderBy: { date: "asc" },
     take: 60,
   });
-  return workouts.map(workoutLine);
+}
+
+/** Everything logged in the last 7 days, one line each (for next-week adjustments). */
+async function loggedLastWeek(userId, today = dateKey()) {
+  return (await workoutsOfLastWeek(userId, today)).map(workoutLine);
+}
+
+/** "Push ×2, Pull ×2, Legs ×2 (6 training days)": how often each session runs in a week. */
+function sessionsPerWeek(days) {
+  const training = days.filter((d) => d.sessionType !== "rest" && d.exercises?.length > 0);
+  const counts = new Map();
+  for (const day of training) counts.set(dayShortName(day), (counts.get(dayShortName(day)) ?? 0) + 1);
+  return `${[...counts].map(([name, n]) => `${name} ×${n}`).join(", ")} (${training.length} training days)`;
 }
 
 /** "Push Pull Legs 2": the split's name, numbered after the first plan. */
@@ -134,7 +145,7 @@ async function generatePlan(user, criteria = {}) {
   try {
     if (!days) throw new Error("the reply is missing a session");
     planData = validateAndSanitizePlan(
-      { planExplanation: reply.planExplanation, totalWeeks: settings.totalWeeks, weeks: [{ week: 1, isDeloadWeek: false, days }] },
+      { planExplanation: reply.planExplanation, totalWeeks: settings.totalWeeks, weekStartedAt: now(), weeks: [{ week: 1, isDeloadWeek: false, days }] },
       equipmentTagsFor(settings.equipment),
     );
   } catch (error) {
@@ -209,7 +220,7 @@ async function recalibratePlan(user, planId) {
   };
   return prisma.plan.update({
     where: { id: planId },
-    data: { planData: withChat(adjusted, chatOf(plan.planData), [note]), weekNumber: next },
+    data: { planData: withChat({ ...adjusted, weekStartedAt: now() }, chatOf(plan.planData), [note]), weekNumber: next },
   });
 }
 
@@ -288,17 +299,30 @@ async function deletePlan(userId, planId) {
 /**
  * One message to the coach. The reply may change this week, which then
  * replaces this week and the ones after it (earlier weeks are history).
+ * `today` is the user's date ("YYYY-MM-DD"); the server's is used without it.
  */
-async function chatWithPlan(user, planId, userMessage) {
+async function chatWithPlan(user, planId, userMessage, today = dateKey()) {
   const plan = await findOwnPlan(user.id, planId);
   const history = chatOf(plan.planData);
   const planOnly = withoutChat(plan.planData);
   const equipment = equipmentOf(user, plan.criteria);
+  const thisWeek = planOnly.weeks?.[Math.max(0, (plan.weekNumber || 1) - 1)]?.days ?? [];
+  const workouts = await workoutsOfLastWeek(user.id, today);
 
   const prompt = buildPlanChatPrompt(compactWeek(planOnly, plan.weekNumber), history, userMessage, anonymizeIronArcProfile(user), {
     weeks: planLength(planOnly),
     weekNumber: plan.weekNumber,
-    logged: await loggedLastWeek(user.id),
+    today: withWeekday(today),
+    weekStartedOn: planOnly.weekStartedAt ? withWeekday(dateKey(new Date(planOnly.weekStartedAt))) : null,
+    sessionsPerWeek: sessionsPerWeek(thisWeek),
+    weekSoFar: weekSoFar(
+      thisWeek,
+      workouts.map((w) => ({ date: dateKey(new Date(w.date)), exercise: w.exercise, createdAt: w.createdAt })),
+      today,
+      dayShortName,
+      planOnly.weekStartedAt,
+    ),
+    logged: workouts.map(workoutLine),
     exerciseIds: allowedExerciseIds(equipment),
   });
   const reply = await askAi(prompt, {

@@ -20,6 +20,11 @@ test("a swap, an added exercise and a new sets×reps are each listed", () => {
   );
 });
 
+test("an exercise that only got its fixed name isn't a change", () => {
+  const renamed = { ...push, exercises: [ex("bench_press", "Barbell Bench Press", 4, "6-8"), ex("tricep_pushdown", "Triceps Pushdown")] };
+  assert.deepEqual(diffPlanWeek(plan([push]), plan([renamed]), 1), []);
+});
+
 test("training → rest", () => {
   assert.deepEqual(diffPlanWeek(plan([push]), plan([rest("monday")]), 1), [{ dayIndex: 0, text: "Mon is now a rest day" }]);
 });
