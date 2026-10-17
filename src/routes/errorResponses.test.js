@@ -3,13 +3,8 @@
 // are replaced before the routes load; requests go to a real local server.
 const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
-const path = require("path");
+const { stub } = require("../testing/stub");
 const express = require("express");
-
-function stub(relative, exports) {
-  const p = require.resolve(path.join(__dirname, "..", relative));
-  require.cache[p] = { id: p, filename: p, loaded: true, exports };
-}
 
 const signedIn = (req, res, next) => {
   req.user = { uid: "uid-1", emailVerified: true, dbUser: { id: "user-1", firebaseUid: "uid-1", equipment: "full_gym" } };

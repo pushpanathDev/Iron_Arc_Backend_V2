@@ -45,7 +45,23 @@ test("the replacement isn't an exercise the day already has", () => {
   assert.equal(new Set(ids).size, ids.length);
 });
 
-test("known exercises keep the AI's name", () => {
-  const plan = validateAndSanitizePlan(trainingDay(["chest"], [{ exerciseId: "bench_press", name: "Paused Bench Press" }]));
-  assert.equal(exercisesOf(plan)[0].name, "Paused Bench Press");
+test("known exercises always get their one name, whatever the AI wrote", () => {
+  const plan = validateAndSanitizePlan(trainingDay(["back"], [{ exerciseId: "pull_up", name: "Pull-Up" }, { exerciseId: "barbell_row", name: "BB Row" }]));
+  assert.deepEqual(exercisesOf(plan).map((e) => e.name), ["Pull Ups", "Barbell Row"]);
+});
+
+test("an exercise without a progression note gets one that fits its reps", () => {
+  const plan = validateAndSanitizePlan(trainingDay(["back"], [
+    { exerciseId: "barbell_row", sets: 4, reps: "8-10" },
+    { exerciseId: "pull_up", sets: 3, reps: "6-8" },
+    { exerciseId: "plank", sets: 3, reps: "30-45s" },
+    { exerciseId: "lat_pulldown", sets: 3, reps: "10", progressionNote: "The AI's own note" },
+  ]));
+  // In session order: row and pull-up (big lifts), pulldown, then plank.
+  assert.deepEqual(exercisesOf(plan).map((e) => [e.exerciseId, e.progressionNote]), [
+    ["barbell_row", "Add 2.5 kg once every set reaches 10 reps"],
+    ["pull_up", "Add 2 reps or slow the lowering once every set reaches 8 reps"],
+    ["lat_pulldown", "The AI's own note"],
+    ["plank", "Hold 5–10 seconds longer once every set reaches 45 seconds"],
+  ]);
 });

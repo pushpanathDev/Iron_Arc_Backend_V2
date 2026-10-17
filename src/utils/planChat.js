@@ -7,6 +7,8 @@
  * (newest last), so a plan and its conversation are saved together.
  */
 
+const { addDays, withWeekday } = require("./dates");
+
 const WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const CHAT_HISTORY_MAX = 40;
 
@@ -54,12 +56,17 @@ function expandDays(shortDays, previousDays = []) {
         estimatedDurationMinutes: Number(d.min) || byDay.get(key)?.estimatedDurationMinutes || 45,
         exercises: d.x.map((x) => {
           const kept = before.get(x.id) || {};
+          const sets = Number(x.s) || kept.sets || 3;
+          const reps = String(x.r ?? kept.reps ?? "8-12");
+          // Its note was written for the old sets and reps; the validator writes a fitting one.
+          const { progressionNote, ...rest } = kept;
+          const unchanged = sets === kept.sets && reps === String(kept.reps);
           return {
-            ...kept,
+            ...(unchanged ? kept : rest),
             exerciseId: x.id || kept.exerciseId,
             name: x.n || kept.name,
-            sets: Number(x.s) || kept.sets || 3,
-            reps: String(x.r ?? kept.reps ?? "8-12"),
+            sets,
+            reps,
             restSeconds: Number(x.rest) || kept.restSeconds || 90,
           };
         }),
@@ -82,6 +89,37 @@ function applyWeekChange(planData, weekNumber, shortDays, { onlyThisWeek = false
       i < from || (onlyThisWeek && i > from) ? week : { ...week, days: expandDays(shortDays, week.days || []) },
     ),
   };
+}
+
+const matchKey = (name) => String(name).toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/**
+ * A plan week on its calendar week (from `monday`), one line per training day,
+ * so the coach talks about what really happened, e.g.
+ *   "Mon 2026-10-12 · Push: logged (6 of 7 exercises)"
+ *   "Tue 2026-10-13 · Pull: not logged"
+ *   "Sat 2026-10-17 · Legs: coming up"
+ * A day counts an exercise as logged when one with its name was saved for that
+ * date. `sessionName` names a day ("Push"); `workouts` are { date: "YYYY-MM-DD", exercise }.
+ */
+function weekSoFar(weekDays, workouts, monday, today, sessionName) {
+  const loggedOn = new Map();
+  for (const w of workouts) {
+    if (!loggedOn.has(w.date)) loggedOn.set(w.date, new Set());
+    loggedOn.get(w.date).add(matchKey(w.exercise));
+  }
+
+  return WEEKDAYS.flatMap((key, i) => {
+    const day = (weekDays ?? []).find((d) => d.day?.toLowerCase() === key);
+    if (!day || day.sessionType === "rest" || !(day.exercises?.length > 0)) return [];
+    const date = addDays(monday, i);
+    const label = `${withWeekday(date)} · ${sessionName(day)}`;
+    if (date > today) return [`${label}: coming up`];
+    const logged = loggedOn.get(date);
+    const done = day.exercises.filter((e) => logged?.has(matchKey(e.name ?? "")) || logged?.has(matchKey(e.exerciseId ?? ""))).length;
+    if (done > 0) return [`${label}: logged (${done} of ${day.exercises.length} exercises)`];
+    return [`${label}: ${date === today ? "not logged yet (today)" : "not logged"}`];
+  });
 }
 
 /** The coach's days if the AI changed the week, else null. */
@@ -107,6 +145,7 @@ function withChat(plan, history, newEntries) {
 
 module.exports = {
   WEEKDAYS,
+  weekSoFar,
   currentWeekIndex,
   compactWeek,
   expandDays,

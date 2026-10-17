@@ -2,12 +2,7 @@
 // the training profile shapes a new plan's prompt. No database or Firebase.
 const { test, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
-const path = require("path");
-
-function stub(relative, exports) {
-  const p = require.resolve(path.join(__dirname, "..", relative));
-  require.cache[p] = { id: p, filename: p, loaded: true, exports };
-}
+const { stub } = require("../testing/stub");
 
 let saved;
 stub("config/database.js", {

@@ -11,7 +11,8 @@ const weekDays = (planData, weekNumber) => planData?.weeks?.[currentWeekIndex(pl
 
 const byWeekday = (days) => WEEKDAYS.map((k) => days.find((d) => (d.day || "").toLowerCase() === k) ?? null);
 const isTraining = (d) => !!d && d.sessionType !== "rest" && (d.exercises?.length ?? 0) > 0;
-const exKey = (e) => (e.name ?? e.exerciseId ?? "").trim().toLowerCase();
+// By id where there is one, so an exercise that only got its fixed name isn't listed as a swap.
+const exKey = (e) => (e.exerciseId ?? e.name ?? "").trim().toLowerCase();
 const scheme = (e) => `${e.sets ?? "?"}×${e.reps ?? "?"}`;
 
 /** "Push", "Legs", "Upper": a short session name from its muscles. */
@@ -66,4 +67,4 @@ function diffPlanWeek(before, after, weekNumber) {
   return out;
 }
 
-module.exports = { diffPlanWeek };
+module.exports = { diffPlanWeek, dayShortName };

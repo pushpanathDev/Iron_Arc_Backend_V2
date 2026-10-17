@@ -91,7 +91,17 @@ const renamePlanSchema = z.object({
 
 const planChatSchema = z.object({
   message: z.string().trim().min(1, "Message is required.").max(1000, "Message is too long (max 1000 characters)."),
+  // The user's own date, so the coach knows where in the week they are. Older apps don't send it.
+  today: isoDate.optional(),
 });
+
+/**
+ * The user's own date ("YYYY-MM-DD") from a request body, when it's a valid
+ * one; plans use it to place weeks on the calendar. Older apps don't send it.
+ */
+function todayFrom(body) {
+  return isoDate.safeParse(body?.today).success ? body.today : undefined;
+}
 
 function validate(schema) {
   return (req, res, next) => {
@@ -120,6 +130,7 @@ function validate(schema) {
 
 module.exports = {
   validate,
+  todayFrom,
   workoutSchema,
   workoutBatchSchema,
   workoutUpdateSchema,

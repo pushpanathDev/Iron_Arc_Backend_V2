@@ -3,12 +3,14 @@ const { groqClient, GROQ_MODEL } = require("../config/groq");
 /*
  * The one place that talks to the AI (Groq). It sends a prompt and expects a
  * JSON object back. Failed calls are retried twice: after a 429 it waits as
- * long as Groq asks (at most a minute), after anything else 1 s, then 2 s.
+ * long as Groq asks, up to 20 s (the app gives up after 2 minutes, and a plan
+ * can take two calls), after anything else 1 s, then 2 s.
  */
 
 const SYSTEM_PROMPT =
   "You are an expert personal trainer. Always respond with valid JSON only. No markdown, no code fences, no explanation outside the JSON object.";
 const RETRIES = 2;
+const MAX_RATE_LIMIT_WAIT_MS = 20_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -58,7 +60,7 @@ async function askForJson(prompt, { maxTokens = 8192 } = {}) {
       if (attempt > RETRIES) break;
 
       const rateLimited = error?.status === 429 || (error?.message || "").includes("429");
-      const waitMs = rateLimited ? Math.min((retryAfterSeconds(error) ?? 30) * 1000, 60_000) : 2 ** (attempt - 1) * 1000;
+      const waitMs = rateLimited ? Math.min((retryAfterSeconds(error) ?? 20) * 1000, MAX_RATE_LIMIT_WAIT_MS) : 2 ** (attempt - 1) * 1000;
       await sleep(waitMs);
     }
   }
