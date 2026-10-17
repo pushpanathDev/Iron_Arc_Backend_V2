@@ -4,11 +4,25 @@ const { anonymizeIronArcProfile } = require("../utils/anonymizer");
 const { validateAndSanitizePlan } = require("../utils/planValidator");
 const { compactWeek, applyWeekChange, changedDays, chatOf, withoutChat, withChat, weekSoFar } = require("../utils/planChat");
 const { diffPlanWeek, dayShortName } = require("../utils/planDiff");
-const { dateKey, addDays, withWeekday } = require("../utils/dates");
+const { dateKey, addDays, withWeekday, mondayOf, shortDay } = require("../utils/dates");
 const { planHasExercise, exerciseNameIn, applySubstitution } = require("../utils/planSwap");
 const { EXERCISE_DB, equipmentTagsFor, allowedExerciseIds, getSubstituteExerciseId } = require("../utils/exerciseDatabase");
 const { buildFirstWeekPrompt, buildNextWeekPrompt, buildSubstitutePrompt, buildPlanChatPrompt } = require("../utils/planPrompts");
-const { SPLIT_NAMES, planSettings, assembleWeek, withNextWeek, planLength, isDeloadWeek } = require("../utils/planSchedule");
+const {
+  SPLIT_NAMES,
+  planSettings,
+  assembleWeek,
+  withNextWeek,
+  withWeek,
+  moveSessions,
+  weekTrainingDays,
+  trainingWeekdays,
+  planLength,
+  isDeloadWeek,
+  firstWeekStartsOn,
+  weekStartsOn,
+} = require("../utils/planSchedule");
+const { WEEKDAYS } = require("../utils/planChat");
 const { askForJson } = require("./aiClient");
 const { evaluateAchievementsSafely } = require("./achievementService");
 
@@ -76,20 +90,23 @@ async function recentWorkouts(userId) {
   return workouts.reverse().map(workoutLine);
 }
 
-/** Workouts from the 7 days up to `today` ("YYYY-MM-DD"), oldest first. */
-function workoutsOfLastWeek(userId, today) {
+/** Workouts dated from `since` ("YYYY-MM-DD") on, oldest first. */
+function workoutsSince(userId, since) {
   return prisma.workout.findMany({
-    where: { userId, deletedAt: null, date: { gte: new Date(`${addDays(today, -7)}T00:00:00Z`) } },
+    where: { userId, deletedAt: null, date: { gte: new Date(`${since}T00:00:00Z`) } },
     include: { sets: { orderBy: { setNumber: "asc" } } },
     orderBy: { date: "asc" },
-    take: 60,
+    take: 120,
   });
 }
 
-/** Everything logged in the last 7 days, one line each (for next-week adjustments). */
+/** Everything logged in the 7 days up to `today`, one line each (for next-week adjustments). */
 async function loggedLastWeek(userId, today = dateKey()) {
-  return (await workoutsOfLastWeek(userId, today)).map(workoutLine);
+  return (await workoutsSince(userId, addDays(today, -7))).map(workoutLine);
 }
+
+/** Testing only (ALLOW_EARLY_NEXT_WEEK=true): start the next week before its Monday. */
+const earlyNextWeekAllowed = () => process.env.ALLOW_EARLY_NEXT_WEEK === "true";
 
 /** "Push ×2, Pull ×2, Legs ×2 (6 training days)": how often each session runs in a week. */
 function sessionsPerWeek(days) {
@@ -123,35 +140,38 @@ const getPlan = findOwnPlan;
    Generate
 ───────────────────────────────────────────────────────────── */
 /**
- * A new plan, written one week at a time: this makes week 1 on the server's
- * schedule (planSchedule), and "next week" adds each week after it.
+ * A week written by the AI on the server's schedule (`settings` from
+ * planSettings): { days, planExplanation }. A reply that leaves out a whole
+ * session gets one more try; after that the user is asked to retry (503).
  */
-async function generatePlan(user, criteria = {}) {
-  const settings = planSettings(user, criteria);
+async function aiWeekOnSchedule(user, settings, unavailable) {
   const prompt = buildFirstWeekPrompt(anonymizeIronArcProfile(user), settings, await recentWorkouts(user.id));
-  const ask = () =>
-    // One week of sessions fits well inside 4,000 tokens; the prompt plus this cap stays under Groq's per-minute limit.
-    askAi(prompt, { maxTokens: 4000, unavailable: "Couldn't build your plan right now. Please try again in a moment." });
+  // One week of sessions fits well inside 4,000 tokens; the prompt plus this cap stays under Groq's per-minute limit.
+  const ask = () => askAi(prompt, { maxTokens: 4000, unavailable });
 
-  // A reply that leaves out a whole session gets one more try before the user is asked to retry.
   let reply = await ask();
   let days = assembleWeek(settings.schedule, reply?.days, settings.minutes);
   if (!days) {
-    console.warn("[generate] AI left out a session; asking once more");
+    console.warn("[week] AI left out a session; asking once more");
     reply = await ask();
     days = assembleWeek(settings.schedule, reply?.days, settings.minutes);
   }
-  let planData;
-  try {
-    if (!days) throw new Error("the reply is missing a session");
-    planData = validateAndSanitizePlan(
-      { planExplanation: reply.planExplanation, totalWeeks: settings.totalWeeks, weekStartedAt: now(), weeks: [{ week: 1, isDeloadWeek: false, days }] },
-      equipmentTagsFor(settings.equipment),
-    );
-  } catch (error) {
-    console.warn(`[generate] AI returned an unusable week: ${error.message}`);
-    throw new HttpError(503, "Could not generate a valid plan. Please try again.");
-  }
+  if (!days) throw new HttpError(503, "Could not generate a valid plan. Please try again.");
+  return { days, planExplanation: reply.planExplanation };
+}
+
+/**
+ * A new plan, written one week at a time: this makes week 1 on the server's
+ * schedule (planSchedule), and "next week" adds each week after it.
+ */
+/** `today` is the user's date ("YYYY-MM-DD"); week 1 is this calendar week, or next week's when made at the weekend. */
+async function generatePlan(user, criteria = {}, today = dateKey()) {
+  const settings = planSettings(user, criteria);
+  const { days, planExplanation } = await aiWeekOnSchedule(user, settings, "Couldn't build your plan right now. Please try again in a moment.");
+  const planData = validateAndSanitizePlan(
+    { planExplanation, totalWeeks: settings.totalWeeks, weekStartsOn: firstWeekStartsOn(today), weeks: [{ week: 1, isDeloadWeek: false, days }] },
+    equipmentTagsFor(settings.equipment),
+  );
 
   const plan = await prisma.$transaction(async (tx) => {
     const existingPlans = await tx.plan.count({ where: { userId: user.id } });
@@ -172,10 +192,13 @@ async function generatePlan(user, criteria = {}) {
 ───────────────────────────────────────────────────────────── */
 /**
  * Moves the plan to its next week, written from this week and tuned to what
- * the user logged in the last 7 days. (Plans made before weekly generation
- * already hold every week; their next week is tuned the same way.)
+ * the user logged in the last 7 days. Plan weeks are calendar weeks: the next
+ * one starts from the Monday after this one (`today` is the user's date). If
+ * the training days changed in the profile, next week moves to the new days.
+ * (Plans made before weekly generation already hold every week; their next
+ * week is tuned the same way.)
  */
-async function recalibratePlan(user, planId) {
+async function recalibratePlan(user, planId, today = dateKey()) {
   const plan = await findOwnPlan(user.id, planId);
   const current = plan.weekNumber || 1;
   const totalWeeks = planLength(plan.planData);
@@ -183,44 +206,78 @@ async function recalibratePlan(user, planId) {
     throw new HttpError(409, "You're on the last week of this plan. Generate a new plan to keep progressing.");
   }
   const next = current + 1;
-  const planOnly = withNextWeek(withoutChat(plan.planData), next);
+  const startsOn = weekStartsOn(plan);
+  if (mondayOf(today) <= startsOn && !earlyNextWeekAllowed()) {
+    throw new HttpError(409, `Week ${next} starts on Monday ${shortDay(addDays(startsOn, 7))}. Until then, keep going with week ${current}.`);
+  }
   const equipment = equipmentOf(user, plan.criteria);
+  const settings = planSettings(user, plan.criteria ?? {});
+  const unavailable = "The coach couldn't prepare next week right now. Please try again in a moment.";
 
-  const prompt = buildNextWeekPrompt(compactWeek(planOnly, current), compactWeek(planOnly, next), await loggedLastWeek(user.id), anonymizeIronArcProfile(user), {
+  // Next week as it stands: this week copied, on the profile's training days.
+  let planOnly = withoutChat(plan.planData);
+  const thisWeek = planOnly.weeks?.[current - 1]?.days ?? [];
+  const newDays = weekTrainingDays(thisWeek).join() !== trainingWeekdays(user).join();
+  if (newDays) {
+    const moved = moveSessions(thisWeek, settings.schedule, settings.minutes) ?? (await aiWeekOnSchedule(user, settings, unavailable)).days;
+    planOnly = withWeek(planOnly, next, moved);
+  } else {
+    planOnly = withNextWeek(planOnly, next);
+  }
+
+  const prompt = buildNextWeekPrompt(compactWeek(planOnly, current), compactWeek(planOnly, next), await loggedLastWeek(user.id, today), anonymizeIronArcProfile(user), {
     weekNumber: current,
     totalWeeks,
-    progression: planSettings(user, plan.criteria ?? {}).progression,
+    progression: settings.progression,
     deload: isDeloadWeek(next),
     exerciseIds: allowedExerciseIds(equipment),
   });
-  const reply = await askAi(prompt, {
-    maxTokens: 3000,
-    unavailable: "The coach couldn't prepare next week right now. Please try again in a moment.",
-  });
-
-  // A broken week from the AI must not block the move: next week then stays as planned.
-  let message = reply?.message || `Week ${next} is ready.`;
-  let adjusted;
-  try {
+  /** The AI's next week, checked, or null when it sent none or an unusable one. */
+  const adjust = (reply) => {
     const days = changedDays(reply);
-    adjusted = validateAndSanitizePlan(days ? applyWeekChange(planOnly, next, days, { onlyThisWeek: true }) : planOnly, equipment);
-  } catch {
-    console.warn("[nextWeek] AI returned an invalid week; keeping next week as planned");
+    if (!days) return null;
+    try {
+      return validateAndSanitizePlan(applyWeekChange(planOnly, next, days, { onlyThisWeek: true }), equipment);
+    } catch {
+      return null;
+    }
+  };
+
+  // Next week must carry the progression, so a reply without it gets one more try.
+  let reply = await askAi(prompt, { maxTokens: 3000, unavailable });
+  let adjusted = adjust(reply);
+  if (!adjusted) {
+    console.warn("[nextWeek] AI sent no usable week; asking once more");
+    reply = await askAi(prompt, { maxTokens: 3000, unavailable });
+    adjusted = adjust(reply);
+  }
+  // Still nothing: the move goes ahead with next week as it stands, and says so.
+  let message = reply?.message || `Week ${next} is ready.`;
+  if (!adjusted) {
     adjusted = validateAndSanitizePlan(planOnly, equipment);
     message = `Week ${next} is ready, as planned. (I couldn't adjust it from your log this time.)`;
   }
+  if (newDays) message = `${message} It's on your new training days.`;
 
+  // The new week runs from this Monday; the one before is kept for the coach's
+  // "last week". Test mode starts it early, in this same week, so the week before
+  // is then treated as last week (dated the week before this one).
+  const newStartsOn = mondayOf(today);
+  const lastStartsOn = startsOn < newStartsOn ? startsOn : addDays(newStartsOn, -7);
   const note = {
     role: "assistant",
     kind: "nextWeek",
+    week: next,
+    weekStartsOn: newStartsOn,
     content: `Moved to week ${next}. ${message}`,
     timestamp: now(),
     planUpdated: true,
     changes: diffPlanWeek(planOnly, adjusted, next),
   };
+  const planData = { ...adjusted, weekStartedAt: undefined, weekStartsOn: newStartsOn, lastWeek: { number: current, startsOn: lastStartsOn } };
   return prisma.plan.update({
     where: { id: planId },
-    data: { planData: withChat({ ...adjusted, weekStartedAt: now() }, chatOf(plan.planData), [note]), weekNumber: next },
+    data: { planData: withChat(planData, chatOf(plan.planData), [note]), weekNumber: next },
   });
 }
 
@@ -297,6 +354,19 @@ async function deletePlan(userId, planId) {
    Coach chat
 ───────────────────────────────────────────────────────────── */
 /**
+ * When the coach moves the active plan's training days ("make it 3 days a
+ * week"), the profile follows, so Home, reminders and next week agree.
+ * True when the profile changed. 1–6 days only, like the profile allows.
+ */
+async function followTrainingDays(user, days) {
+  const weekdays = weekTrainingDays(days);
+  if (weekdays.length === 0 || weekdays.length > 6 || weekdays.join() === trainingWeekdays(user).join()) return false;
+  await prisma.user.update({ where: { id: user.id }, data: { trainingDays: weekdays, weeklyGoal: weekdays.length } });
+  console.log(`[planChat] training days now ${weekdays.map((d) => WEEKDAYS[d - 1].slice(0, 3)).join(", ")}`);
+  return true;
+}
+
+/**
  * One message to the coach. The reply may change this week, which then
  * replaces this week and the ones after it (earlier weeks are history).
  * `today` is the user's date ("YYYY-MM-DD"); the server's is used without it.
@@ -306,23 +376,29 @@ async function chatWithPlan(user, planId, userMessage, today = dateKey()) {
   const history = chatOf(plan.planData);
   const planOnly = withoutChat(plan.planData);
   const equipment = equipmentOf(user, plan.criteria);
-  const thisWeek = planOnly.weeks?.[Math.max(0, (plan.weekNumber || 1) - 1)]?.days ?? [];
-  const workouts = await workoutsOfLastWeek(user.id, today);
+  const current = plan.weekNumber || 1;
+  const thisWeek = planOnly.weeks?.[current - 1]?.days ?? [];
+  const startsOn = weekStartsOn(plan);
+  const lastWeek = planOnly.lastWeek?.startsOn ? planOnly.lastWeek : null;
+  const since = [addDays(today, -7), startsOn, lastWeek?.startsOn].filter(Boolean).sort()[0];
+  const workouts = await workoutsSince(user.id, since);
+  const dated = workouts.map((w) => ({ date: dateKey(new Date(w.date)), exercise: w.exercise }));
+  /** A plan week as the coach sees it: its dates and one line per training day. */
+  const describeWeek = (number, days, monday) => ({
+    number,
+    range: `${withWeekday(monday)} to ${withWeekday(addDays(monday, 6))}`,
+    lines: weekSoFar(days, dated, monday, today, dayShortName),
+    over: today > addDays(monday, 6),
+  });
 
   const prompt = buildPlanChatPrompt(compactWeek(planOnly, plan.weekNumber), history, userMessage, anonymizeIronArcProfile(user), {
     weeks: planLength(planOnly),
     weekNumber: plan.weekNumber,
     today: withWeekday(today),
-    weekStartedOn: planOnly.weekStartedAt ? withWeekday(dateKey(new Date(planOnly.weekStartedAt))) : null,
     sessionsPerWeek: sessionsPerWeek(thisWeek),
-    weekSoFar: weekSoFar(
-      thisWeek,
-      workouts.map((w) => ({ date: dateKey(new Date(w.date)), exercise: w.exercise, createdAt: w.createdAt })),
-      today,
-      dayShortName,
-      planOnly.weekStartedAt,
-    ),
-    logged: workouts.map(workoutLine),
+    thisWeek: describeWeek(current, thisWeek, startsOn),
+    lastWeek: lastWeek ? describeWeek(lastWeek.number, planOnly.weeks?.[lastWeek.number - 1]?.days ?? [], lastWeek.startsOn) : null,
+    logged: workouts.filter((w) => dateKey(new Date(w.date)) >= addDays(today, -7)).map(workoutLine),
     exerciseIds: allowedExerciseIds(equipment),
   });
   const reply = await askAi(prompt, {
@@ -352,10 +428,12 @@ async function chatWithPlan(user, planId, userMessage, today = dateKey()) {
   };
   const planData = withChat(changedPlan ?? planOnly, history, [{ role: "user", content: userMessage, timestamp: now() }, coachReply]);
   await prisma.plan.update({ where: { id: planId }, data: { planData } });
+  const profileUpdated = changedPlan && plan.isActive ? await followTrainingDays(user, changedPlan.weeks?.[(plan.weekNumber || 1) - 1]?.days) : false;
 
   return {
     message,
     planUpdated: Boolean(changedPlan),
+    profileUpdated,
     chatHistory: planData._chatHistory,
     planData,
   };

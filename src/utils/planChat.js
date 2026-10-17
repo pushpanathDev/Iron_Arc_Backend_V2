@@ -7,7 +7,7 @@
  * (newest last), so a plan and its conversation are saved together.
  */
 
-const { addDays, weekdayOf, withWeekday } = require("./dates");
+const { addDays, withWeekday } = require("./dates");
 
 const WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const CHAT_HISTORY_MAX = 40;
@@ -94,21 +94,17 @@ function applyWeekChange(planData, weekNumber, shortDays, { onlyThisWeek = false
 const matchKey = (name) => String(name).toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /**
- * The plan's current week on this calendar week, one line per training day,
+ * A plan week on its calendar week (from `monday`), one line per training day,
  * so the coach talks about what really happened, e.g.
  *   "Mon 2026-10-12 · Push: logged (6 of 7 exercises)"
  *   "Tue 2026-10-13 · Pull: not logged"
  *   "Sat 2026-10-17 · Legs: coming up"
- * A day counts an exercise as logged when one with its name was saved on that date,
- * after this plan week started (`startedAt`, an ISO time): moving on to the next
- * week mid-week starts with nothing done. `sessionName` names a day ("Push");
- * `workouts` are { date: "YYYY-MM-DD", exercise, createdAt }.
+ * A day counts an exercise as logged when one with its name was saved for that
+ * date. `sessionName` names a day ("Push"); `workouts` are { date: "YYYY-MM-DD", exercise }.
  */
-function weekSoFar(weekDays, workouts, today, sessionName, startedAt) {
-  const monday = addDays(today, -weekdayOf(today));
+function weekSoFar(weekDays, workouts, monday, today, sessionName) {
   const loggedOn = new Map();
   for (const w of workouts) {
-    if (startedAt && new Date(w.createdAt) < new Date(startedAt)) continue;
     if (!loggedOn.has(w.date)) loggedOn.set(w.date, new Set());
     loggedOn.get(w.date).add(matchKey(w.exercise));
   }

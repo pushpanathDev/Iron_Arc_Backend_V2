@@ -67,13 +67,13 @@ test("this week so far: logged, not logged, today and coming up", () => {
     { date: "2026-10-12", exercise: "barbell bench press" },
     { date: "2026-10-16", exercise: "Pull Ups" }, // Tuesday's Pull, done on Friday: Friday's
   ];
-  assert.deepEqual(weekSoFar(days, logged, "2026-10-16", dayShortName), [
+  assert.deepEqual(weekSoFar(days, logged, "2026-10-12", "2026-10-16", dayShortName), [
     "Mon 2026-10-12 · Push: logged (1 of 2 exercises)",
     "Tue 2026-10-13 · Pull: not logged",
     "Fri 2026-10-16 · Pull: logged (1 of 1 exercises)",
     "Sat 2026-10-17 · Legs: coming up",
   ]);
-  assert.deepEqual(weekSoFar(days.slice(2, 3), [], "2026-10-16", dayShortName), ["Fri 2026-10-16 · Pull: not logged yet (today)"]);
+  assert.deepEqual(weekSoFar(days.slice(2, 3), [], "2026-10-12", "2026-10-16", dayShortName), ["Fri 2026-10-16 · Pull: not logged yet (today)"]);
 });
 
 test("a change applies to this week and the later ones; earlier weeks are history", () => {

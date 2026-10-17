@@ -1,7 +1,7 @@
 const express = require("express");
 const { verifyFirebaseToken, requireEmailVerified } = require("../middleware/authMiddleware");
 const { planGenerationLimiter, planChatLimiter } = require("../middleware/rateLimiter");
-const { validate, substituteSchema, renamePlanSchema, planChatSchema } = require("../middleware/validation");
+const { validate, todayFrom, substituteSchema, renamePlanSchema, planChatSchema } = require("../middleware/validation");
 const planningService = require("../services/planningService");
 
 const router = express.Router();
@@ -15,7 +15,7 @@ router.get("/", async (req, res) => {
 
 // A new AI plan from the profile and the plan form; it becomes the active plan.
 router.post("/generate", requireEmailVerified, planGenerationLimiter, async (req, res) => {
-  const { plan, newlyUnlocked } = await planningService.generatePlan(req.user.dbUser, req.body?.criteria ?? {});
+  const { plan, newlyUnlocked } = await planningService.generatePlan(req.user.dbUser, req.body?.criteria ?? {}, todayFrom(req.body));
   res.status(201).json({ success: true, data: plan, newlyUnlocked });
 });
 
@@ -24,9 +24,9 @@ router.get("/:id", async (req, res) => {
   res.json({ success: true, data: plan });
 });
 
-// "Next week": moves the plan on a week, tuned to the last 7 days of training.
+// "Next week": moves the plan on a week (from the Monday after this one), tuned to the last 7 days of training.
 router.post("/:id/recalibrate", requireEmailVerified, planGenerationLimiter, async (req, res) => {
-  const plan = await planningService.recalibratePlan(req.user.dbUser, req.params.id);
+  const plan = await planningService.recalibratePlan(req.user.dbUser, req.params.id, todayFrom(req.body));
   res.json({ success: true, data: plan });
 });
 

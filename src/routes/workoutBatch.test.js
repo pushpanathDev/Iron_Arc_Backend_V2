@@ -4,7 +4,7 @@
 // if the callback succeeds, like a real transaction.
 const { test, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
-const path = require("path");
+const { stub } = require("../testing/stub");
 const express = require("express");
 
 // ── Fakes ─────────────────────────────────────────────────────────────────
@@ -43,10 +43,6 @@ const fakePrisma = {
   workout: { create: fakeCreate(committed) },
 };
 
-function stub(relative, exports) {
-  const p = require.resolve(path.join(__dirname, "..", relative));
-  require.cache[p] = { id: p, filename: p, loaded: true, exports };
-}
 stub("config/database.js", { prisma: fakePrisma });
 stub("middleware/authMiddleware.js", {
   verifyFirebaseToken: (req, _res, next) => {

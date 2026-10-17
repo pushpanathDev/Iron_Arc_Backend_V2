@@ -95,6 +95,14 @@ const planChatSchema = z.object({
   today: isoDate.optional(),
 });
 
+/**
+ * The user's own date ("YYYY-MM-DD") from a request body, when it's a valid
+ * one; plans use it to place weeks on the calendar. Older apps don't send it.
+ */
+function todayFrom(body) {
+  return isoDate.safeParse(body?.today).success ? body.today : undefined;
+}
+
 function validate(schema) {
   return (req, res, next) => {
     const result = schema.safeParse(req.body);
@@ -122,6 +130,7 @@ function validate(schema) {
 
 module.exports = {
   validate,
+  todayFrom,
   workoutSchema,
   workoutBatchSchema,
   workoutUpdateSchema,

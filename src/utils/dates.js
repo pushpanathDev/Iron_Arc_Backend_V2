@@ -18,4 +18,10 @@ const weekdayOf = (key) => (new Date(`${key}T00:00:00Z`).getUTCDay() + 6) % 7;
 /** "Mon 2026-10-12" */
 const withWeekday = (key) => `${SHORT_WEEKDAYS[weekdayOf(key)]} ${key}`;
 
-module.exports = { dateKey, addDays, weekdayOf, withWeekday };
+/** Monday of the calendar week a key is in. */
+const mondayOf = (key) => addDays(key, -weekdayOf(key));
+
+/** "19 Oct" */
+const shortDay = (key) => new Date(`${key}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+
+module.exports = { dateKey, addDays, weekdayOf, withWeekday, mondayOf, shortDay };

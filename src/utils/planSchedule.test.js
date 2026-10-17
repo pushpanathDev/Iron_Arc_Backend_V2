@@ -71,3 +71,13 @@ test("older plans that hold every week keep their planned next week and their le
   assert.equal(planLength(old), 4);
   assert.equal(planLength({ totalWeeks: 8, weeks: [{}] }), 8);
 });
+
+test("plan weeks are calendar weeks: week 1's Monday, and the current week's Monday", () => {
+  const { firstWeekStartsOn, weekStartsOn } = require("./planSchedule");
+  assert.equal(firstWeekStartsOn("2026-10-14"), "2026-10-12", "made on a Wednesday: this week");
+  assert.equal(firstWeekStartsOn("2026-10-18"), "2026-10-19", "made on a Sunday: next week");
+  assert.equal(weekStartsOn({ planData: { weekStartsOn: "2026-10-19" } }), "2026-10-19");
+  // Plans from before: the week's start time, or weeks counted from when the plan was made.
+  assert.equal(weekStartsOn({ planData: { weekStartedAt: "2026-10-16T15:00:00.000Z" } }), "2026-10-12");
+  assert.equal(weekStartsOn({ createdAt: "2026-10-01T09:00:00.000Z", weekNumber: 3, planData: {} }), "2026-10-12");
+});

@@ -6,8 +6,13 @@
  *
  * Plans are built one week at a time: week 1 when the plan is generated, each
  * later week by "next week" from what the user logged.
+ *
+ * Plan weeks are calendar weeks, Monday to Sunday. Each week knows its Monday
+ * (weekStartsOn); the next one can start from the Monday after, and is written
+ * then, so the coach sees the whole week before it.
  */
 const { WEEKDAYS } = require("./planChat");
+const { addDays, dateKey, mondayOf, weekdayOf } = require("./dates");
 
 /** The muscles each session trains (the exercise database's names). */
 const SESSION_MUSCLES = {
@@ -161,6 +166,55 @@ function withNextWeek(plan, next) {
   return { ...plan, weeks: [...weeks, { week: next, isDeloadWeek: isDeloadWeek(next), days: structuredClone(before?.days ?? []) }] };
 }
 
+/** The ISO weekdays (1 = Monday) a week trains on. */
+function weekTrainingDays(days) {
+  return (days ?? [])
+    .filter((d) => d.sessionType !== "rest" && d.exercises?.length > 0)
+    .map((d) => WEEKDAYS.indexOf(String(d.day).toLowerCase()) + 1)
+    .filter((n) => n > 0)
+    .sort((a, b) => a - b);
+}
+
+const sameMuscles = (a = [], b = []) => a.length === b.length && a.every((m) => b.includes(m));
+
+/**
+ * This week's sessions moved onto a new schedule (new training days): each
+ * scheduled day takes the exercises of this week's day that trains the same
+ * muscles. Null when a session has no match (the split changed), so the AI
+ * has to write that week.
+ */
+function moveSessions(days, schedule, minutes) {
+  const training = (days ?? []).filter((d) => d.sessionType !== "rest" && d.exercises?.length > 0);
+  const carried = schedule
+    .map((s) => ({ day: s.day, exercises: training.find((d) => sameMuscles(d.targetMuscles, s.muscles))?.exercises }))
+    .filter((d) => d.exercises);
+  return assembleWeek(schedule, carried, minutes);
+}
+
+/** The plan with week `number` set to `days` (replacing it, or added as the next week). */
+function withWeek(plan, number, days) {
+  const weeks = [...(plan.weeks ?? [])];
+  weeks[number - 1] = { week: number, isDeloadWeek: isDeloadWeek(number), days };
+  return { ...plan, weeks };
+}
+
+/** Week 1's Monday for a plan made on `today`: this week's, or next week's when it's made at the weekend. */
+function firstWeekStartsOn(today) {
+  return weekdayOf(today) >= 5 ? addDays(mondayOf(today), 7) : mondayOf(today);
+}
+
+/**
+ * The Monday of the plan's current week. Each week stores it; plans from
+ * before that have the time their week started, or count weeks from when they
+ * were made.
+ */
+function weekStartsOn(plan) {
+  const data = plan.planData ?? {};
+  if (data.weekStartsOn) return data.weekStartsOn;
+  if (data.weekStartedAt) return mondayOf(dateKey(new Date(data.weekStartedAt)));
+  return addDays(firstWeekStartsOn(dateKey(new Date(plan.createdAt))), 7 * ((plan.weekNumber || 1) - 1));
+}
+
 /** How many weeks a plan runs: set when it was made, or every week it holds (older plans). */
 const planLength = (planData) => planData?.totalWeeks ?? planData?.weeks?.length ?? 1;
 
@@ -171,6 +225,12 @@ module.exports = {
   defaultSplit,
   splitFor,
   weekSchedule,
+  firstWeekStartsOn,
+  weekStartsOn,
+  trainingWeekdays,
+  weekTrainingDays,
+  moveSessions,
+  withWeek,
   planSettings,
   assembleWeek,
   withNextWeek,
