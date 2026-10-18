@@ -1,6 +1,6 @@
 const express = require("express");
 const { verifyFirebaseToken, requireEmailVerified } = require("../middleware/authMiddleware");
-const { validate, workoutSchema, workoutBatchSchema, workoutUpdateSchema } = require("../middleware/validation");
+const { validate, workoutSchema, workoutBatchSchema, workoutUpdateSchema, workoutMoveSchema } = require("../middleware/validation");
 const { pageFromQuery } = require("../utils/paging");
 const workoutService = require("../services/workoutService");
 
@@ -29,6 +29,13 @@ router.get("/", async (req, res) => {
 router.get("/:id", async (req, res) => {
   const workout = await workoutService.getWorkout(req.user.dbUser.id, req.params.id);
   res.json({ success: true, data: workout });
+});
+
+// A whole session to another day, in one transaction. Body: { ids, date }.
+// Before "/:id", so "move" isn't read as a workout id.
+router.patch("/move", requireEmailVerified, validate(workoutMoveSchema), async (req, res) => {
+  const { workouts, newlyUnlocked } = await workoutService.moveWorkouts(req.user.dbUser.id, req.body);
+  res.json({ success: true, data: workouts, newlyUnlocked });
 });
 
 router.patch("/:id", requireEmailVerified, validate(workoutUpdateSchema), async (req, res) => {

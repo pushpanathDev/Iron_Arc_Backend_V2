@@ -22,9 +22,6 @@ const newWorkout = (userId, date, entry) => ({
 async function createWorkout(userId, data) {
   const workout = await prisma.workout.create({ data: newWorkout(userId, data.date, data), include: withSets });
 
-  // After the save and best-effort: an evaluation failure is logged and never
-  // turns this successful save into an error response.
-
   // After commit and best-effort: an evaluation failure is logged and never
   // turns this successful save into an error response.
   const newlyUnlocked = await evaluateAchievementsSafely(userId, "workout");
@@ -44,6 +41,26 @@ async function createWorkoutBatch(userId, { date, entries }) {
       created.push(await tx.workout.create({ data: newWorkout(userId, date, entry), include: withSets }));
     }
     return created;
+  });
+
+  const newlyUnlocked = await evaluateAchievementsSafely(userId, "workout");
+  return { workouts, newlyUnlocked };
+}
+
+/**
+ * Moves several workouts (one session) to `date` in ONE transaction: all of
+ * them move or none does, and none moves if any isn't the user's (404).
+ * Returns them with their sets, in the order they were logged. Achievements
+ * are evaluated once, after commit, best-effort (see createWorkout).
+ */
+async function moveWorkouts(userId, { ids, date }) {
+  const workouts = await prisma.$transaction(async (tx) => {
+    const { count } = await tx.workout.updateMany({
+      where: { id: { in: ids }, userId, deletedAt: null },
+      data: { date: new Date(date) },
+    });
+    if (count !== ids.length) throw notFound(); // rolls the move back
+    return tx.workout.findMany({ where: { id: { in: ids }, userId }, include: withSets, orderBy: { createdAt: "asc" } });
   });
 
   const newlyUnlocked = await evaluateAchievementsSafely(userId, "workout");
@@ -137,5 +154,6 @@ module.exports = {
   getWorkouts,
   getWorkout,
   updateWorkout,
+  moveWorkouts,
   deleteWorkout,
 };
