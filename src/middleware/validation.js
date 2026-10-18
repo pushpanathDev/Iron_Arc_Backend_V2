@@ -44,6 +44,17 @@ const workoutBatchSchema = z
 // Any subset of a workout; sets, when given, replace all of the old ones.
 const workoutUpdateSchema = workoutSchema.partial();
 
+// PATCH /api/workouts/move: a whole session to another day. Body: { ids, date }.
+const MAX_MOVE = 50;
+const workoutMoveSchema = z.object({
+  ids: z
+    .array(z.string().min(1).max(64))
+    .min(1)
+    .max(MAX_MOVE)
+    .refine((ids) => new Set(ids).size === ids.length, "ids must be unique"),
+  date: isoDate,
+});
+
 const bodyWeightSchema = z.object({
   date: isoDate,
   weight: z.number().min(1).max(500),
@@ -134,6 +145,7 @@ module.exports = {
   workoutSchema,
   workoutBatchSchema,
   workoutUpdateSchema,
+  workoutMoveSchema,
   bodyWeightSchema,
   profileUpdateSchema,
   customExerciseSchema,
