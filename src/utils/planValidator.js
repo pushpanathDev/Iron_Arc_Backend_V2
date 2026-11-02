@@ -139,15 +139,64 @@ function validateAndSanitizePlan(rawPlan, equipmentTags = equipmentTagsFor(null)
 /**
  * Why a week (seven plan days) can't be used as an AI change, or [] when it can.
  * The validator already bounds each exercise; these are the rules for the week
- * as a whole, so a change talked into "train every day" is refused.
+ * as a whole, so a change talked into "train every day" is refused. In Safe
+ * mode the week may also grow only a little from `before` (the week it replaces).
  */
-function weekProblems(days) {
+function weekProblems(days, { safeMode = false, before = null } = {}) {
   const problems = [];
   const training = (days ?? []).filter((d) => d.sessionType !== "rest" && d.exercises?.length > 0);
   if (training.length > LIMITS.trainingDaysPerWeek) problems.push("no rest day");
   const names = (days ?? []).map((d) => String(d.day).toLowerCase());
   if (names.some((n) => !WEEKDAYS.includes(n)) || new Set(names).size !== names.length) problems.push("unknown or repeated days");
+  const had = weeklySets(before);
+  if (safeMode && had > 0 && weeklySets(days) > Math.ceil(had * (1 + SAFE_LIMITS.weeklySetsGrowth))) problems.push("too big a jump");
   return problems;
 }
 
-module.exports = { validateAndSanitizePlan, progressionNoteFor, normalizeReps, weekProblems, LIMITS };
+/* ─────────────────────────────────────────────────────────────
+   Safe mode (a "yes" in the health check, see utils/healthCheck.js)
+───────────────────────────────────────────────────────────── */
+/** Tighter than LIMITS for what the AI writes in Safe mode: no heavy low-rep or to-failure sets, small steps up. */
+const SAFE_LIMITS = { maxSets: 4, minRestSeconds: 60, minReps: 8, weeklySetsGrowth: 0.1 };
+
+/** All sets in a week's training days. */
+function weeklySets(days) {
+  return (days ?? []).reduce((sum, d) => sum + (d.exercises ?? []).reduce((n, ex) => n + (Number(ex.sets) || 0), 0), 0);
+}
+
+/** Reps for Safe mode: AMRAP and ranges under 8 reps become 8-12 or so; timed holds stay. */
+function saferReps(reps) {
+  const text = normalizeReps(reps);
+  if (text === "AMRAP") return "10-12";
+  const m = text.match(/^(\d+)(?:-(\d+))?(\s+(?:per|each)\s+(?:side|leg|arm))?$/);
+  if (!m || Number(m[1]) >= SAFE_LIMITS.minReps) return text;
+  return `${SAFE_LIMITS.minReps}-${Math.max(Number(m[2] ?? m[1]), 12)}${m[3] ?? ""}`;
+}
+
+/** Validated training days bounded for Safe mode; an exercise whose reps change gets a fitting progression note. */
+function saferDays(days) {
+  return (days ?? []).map((day) =>
+    day.sessionType === "rest"
+      ? day
+      : {
+          ...day,
+          exercises: (day.exercises ?? []).map((ex) => {
+            const reps = saferReps(ex.reps);
+            return {
+              ...ex,
+              sets: Math.min(ex.sets, SAFE_LIMITS.maxSets),
+              restSeconds: Math.max(ex.restSeconds, SAFE_LIMITS.minRestSeconds),
+              reps,
+              progressionNote: reps === ex.reps ? ex.progressionNote : progressionNoteFor(ex.exerciseId, reps),
+            };
+          }),
+        },
+  );
+}
+
+/** A validated plan with week `weekNumber` and the weeks after it bounded for Safe mode (earlier weeks are history). */
+function saferFrom(plan, weekNumber = 1) {
+  return { ...plan, weeks: plan.weeks.map((week, i) => (i + 1 >= weekNumber ? { ...week, days: saferDays(week.days) } : week)) };
+}
+
+module.exports = { validateAndSanitizePlan, progressionNoteFor, normalizeReps, weekProblems, saferReps, saferDays, saferFrom, weeklySets, LIMITS, SAFE_LIMITS };

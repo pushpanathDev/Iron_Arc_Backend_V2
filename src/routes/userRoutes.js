@@ -5,7 +5,7 @@ const {
   requireEmailVerified,
   requireRecentSignIn,
 } = require("../middleware/authMiddleware");
-const { validate, profileUpdateSchema } = require("../middleware/validation");
+const { validate, profileUpdateSchema, healthCheckSchema } = require("../middleware/validation");
 const userService = require("../services/userService");
 
 const router = express.Router();
@@ -23,6 +23,12 @@ router.get("/profile", (req, res) => {
 
 router.patch("/profile", requireEmailVerified, validate(profileUpdateSchema), async (req, res) => {
   const updated = await userService.updateProfile(req.user.dbUser.id, req.body);
+  res.json({ success: true, data: updated });
+});
+
+// The coach's health check and AI terms; any "yes" turns on Safe mode. Can be redone any time.
+router.put("/health-check", requireEmailVerified, validate(healthCheckSchema), async (req, res) => {
+  const updated = await userService.saveHealthCheck(req.user.dbUser.id, req.body.answers);
   res.json({ success: true, data: updated });
 });
 

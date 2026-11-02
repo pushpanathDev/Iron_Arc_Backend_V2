@@ -2,7 +2,9 @@ const { createHash, randomUUID } = require("node:crypto");
 const { prisma } = require("../config/database");
 const { HttpError } = require("../utils/httpError");
 const { anonymizeIronArcProfile } = require("../utils/anonymizer");
-const { validateAndSanitizePlan, weekProblems } = require("../utils/planValidator");
+const { safeModeOf } = require("../utils/healthCheck");
+const { dangerSign, outOfScope, NUTRITION_REPLY } = require("../utils/safetyTriage");
+const { validateAndSanitizePlan, weekProblems, saferFrom } = require("../utils/planValidator");
 const { aiText, promptText } = require("../utils/aiText");
 const { firstWeekReply, weekChangeReply, substituteReply, parseReply } = require("../utils/aiReplies");
 const { compactWeek, applyWeekChange, changedDays, chatOf, withoutChat, withChat, weekSoFar, pendingChangeOf, settleProposal } = require("../utils/planChat");
@@ -96,11 +98,14 @@ function workoutLine(w) {
 /**
  * An AI change to one week, checked: the plan with it applied, or why not.
  * The change must pass the validator's limits and the week rules (a rest day).
+ * In Safe mode it's bounded further and may add only a little to the week.
  */
-function checkedWeekChange(planOnly, weekNumber, days, equipment, options) {
+function checkedWeekChange(planOnly, weekNumber, days, equipment, { safeMode = false, ...options } = {}) {
   try {
-    const plan = validateAndSanitizePlan(applyWeekChange(planOnly, weekNumber, days, options), equipment);
-    const problems = weekProblems(plan.weeks?.[(weekNumber || 1) - 1]?.days);
+    const week = weekNumber || 1;
+    const validated = validateAndSanitizePlan(applyWeekChange(planOnly, weekNumber, days, options), equipment);
+    const plan = safeMode ? saferFrom(validated, week) : validated;
+    const problems = weekProblems(plan.weeks?.[week - 1]?.days, { safeMode, before: planOnly.weeks?.[week - 1]?.days });
     return problems.length > 0 ? { problems } : { plan };
   } catch {
     return { problems: ["invalid week"] };
@@ -192,14 +197,21 @@ async function aiWeekOnSchedule(user, settings, unavailable) {
  * A new plan, written one week at a time: this makes week 1 on the server's
  * schedule (planSchedule), and "next week" adds each week after it.
  */
+/** planSettings, with conservative intensity in Safe mode. */
+function settingsFor(user, criteria) {
+  const settings = planSettings(user, criteria);
+  return safeModeOf(user) ? { ...settings, intensity: "conservative" } : settings;
+}
+
 /** `today` is the user's date ("YYYY-MM-DD"); week 1 is this calendar week, or next week's when made at the weekend. */
 async function generatePlan(user, criteria = {}, today = dateKey()) {
-  const settings = planSettings(user, criteria);
+  const settings = settingsFor(user, criteria);
   const { days, planExplanation } = await aiWeekOnSchedule(user, settings, "Couldn't build your plan right now. Please try again in a moment.");
-  const planData = validateAndSanitizePlan(
+  const validated = validateAndSanitizePlan(
     { planExplanation, totalWeeks: settings.totalWeeks, weekStartsOn: firstWeekStartsOn(today), weeks: [{ week: 1, isDeloadWeek: false, days }] },
     equipmentTagsFor(settings.equipment),
   );
+  const planData = safeModeOf(user) ? saferFrom(validated) : validated;
 
   const plan = await prisma.$transaction(async (tx) => {
     const existingPlans = await tx.plan.count({ where: { userId: user.id } });
@@ -239,7 +251,8 @@ async function recalibratePlan(user, planId, today = dateKey()) {
     throw new HttpError(409, `Week ${next} starts on Monday ${shortDay(addDays(startsOn, 7))}. Until then, keep going with week ${current}.`);
   }
   const equipment = equipmentOf(user, plan.criteria);
-  const settings = planSettings(user, plan.criteria ?? {});
+  const settings = settingsFor(user, plan.criteria ?? {});
+  const safeMode = safeModeOf(user);
   const unavailable = "The coach couldn't prepare next week right now. Please try again in a moment.";
 
   // Next week as it stands: this week copied, on the profile's training days.
@@ -263,7 +276,7 @@ async function recalibratePlan(user, planId, today = dateKey()) {
   /** The AI's next week, checked, or null when it sent none or an unusable one. */
   const adjust = (reply) => {
     const days = changedDays(reply);
-    return days ? (checkedWeekChange(planOnly, next, days, equipment, { onlyThisWeek: true }).plan ?? null) : null;
+    return days ? (checkedWeekChange(planOnly, next, days, equipment, { onlyThisWeek: true, safeMode }).plan ?? null) : null;
   };
   const ask = async () => parseReply(weekChangeReply, await askAi(prompt, { userId: user.id, maxTokens: 3000, unavailable }));
 
@@ -279,6 +292,7 @@ async function recalibratePlan(user, planId, today = dateKey()) {
   let message = aiText(reply?.message, 700) || `Week ${next} is ready.`;
   if (!adjusted) {
     adjusted = validateAndSanitizePlan(planOnly, equipment);
+    if (safeMode) adjusted = saferFrom(adjusted, next);
     message = `Week ${next} is ready, as planned. (I couldn't adjust it from your log this time.)`;
   }
   if (newDays) message = `${message} It's on your new training days.`;
@@ -419,6 +433,16 @@ async function chatWithPlan(user, planId, userMessage, today = dateKey()) {
   const plan = await findOwnPlan(user.id, planId);
   const history = chatOf(plan.planData);
   const planOnly = withoutChat(plan.planData);
+
+  // Danger signs get a fixed, careful reply instead of coaching, without the AI.
+  const sign = dangerSign(userMessage);
+  if (sign) {
+    console.warn(`[planChat] danger sign (${sign.kind}): fixed safety reply`);
+    const safetyReply = { role: "assistant", kind: "safety", content: sign.reply, timestamp: now() };
+    const planData = withChat(planOnly, history, [{ role: "user", content: userMessage, timestamp: now() }, safetyReply], pendingChangeOf(plan.planData));
+    await saveIfUnchanged(plan, { planData }, "Your plan changed while the coach was replying. Please send your message again.");
+    return { message: sign.reply, planUpdated: false, proposal: null, profileUpdated: false, safety: true, chatHistory: planData._chatHistory, planData };
+  }
   const equipment = equipmentOf(user, plan.criteria);
   const current = plan.weekNumber || 1;
   const thisWeek = planOnly.weeks?.[current - 1]?.days ?? [];
@@ -452,13 +476,22 @@ async function chatWithPlan(user, planId, userMessage, today = dateKey()) {
   // must not lose the reply: the plan stays as it was and the reply says so.
   let message = aiText(raw?.message, 700);
   if (!message) throw new HttpError(503, unavailable);
-  const reply = parseReply(weekChangeReply, raw);
+  // Beyond general nutrition guidance (a calorie target, a dose, drugs): replaced, with no change.
+  const beyondScope = outOfScope(message);
+  if (beyondScope) {
+    console.warn("[planChat] reply went beyond general guidance; replaced");
+    message = NUTRITION_REPLY;
+  }
+  const reply = beyondScope ? null : parseReply(weekChangeReply, raw);
   let changedPlan = null;
   const days = reply ? changedDays(reply) : null;
   if (days) {
-    const checked = checkedWeekChange(planOnly, plan.weekNumber, days, equipment);
+    const checked = checkedWeekChange(planOnly, plan.weekNumber, days, equipment, { safeMode: safeModeOf(user) });
     if (checked.plan) {
       changedPlan = checked.plan;
+    } else if (checked.problems.includes("too big a jump")) {
+      console.warn("[planChat] Safe mode: AI change added too much at once; keeping the current plan");
+      message = `${message} (I kept your plan as it was: in Safe mode, a change can only add a little training at a time.)`;
     } else if (checked.problems.includes("no rest day")) {
       console.warn("[planChat] AI change left no rest day; keeping the current plan");
       message = `${message} (I kept your plan as it was: every week needs at least one rest day.)`;
@@ -466,7 +499,7 @@ async function chatWithPlan(user, planId, userMessage, today = dateKey()) {
       console.warn("[planChat] AI returned an invalid week; keeping the current plan");
       message = `${message} (I couldn't apply that change to your plan this time. Try asking for one change at a time.)`;
     }
-  } else if (!reply && Array.isArray(raw?.modifiedDays) && raw.modifiedDays.length > 0) {
+  } else if (!reply && !beyondScope && Array.isArray(raw?.modifiedDays) && raw.modifiedDays.length > 0) {
     console.warn("[planChat] AI returned a malformed week; keeping the current plan");
     message = `${message} (I couldn't apply that change to your plan this time. Try asking for one change at a time.)`;
   }

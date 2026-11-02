@@ -31,6 +31,9 @@ model User {
   trainingDays    Int[]   @default([]) @map("training_days")
   /// Areas to go easy on: knees | lower_back | shoulders | wrists
   avoidAreas      String[] @default([]) @map("avoid_areas")
+  /// The AI coach's health check (utils/healthCheck.js): { version, answers: { heart: false, … },
+  /// checkedAt, consentedAt }. Yes/no answers only; any "yes" turns on Safe mode. Null until done.
+  healthCheck     Json?   @map("health_check")
   isAdmin       Boolean  @default(false) @map("is_admin")
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at")

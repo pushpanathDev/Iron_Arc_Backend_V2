@@ -1,5 +1,6 @@
 const { z } = require("zod");
 const { plainText } = require("../utils/aiText");
+const { HEALTH_CHECK_QUESTIONS } = require("../utils/healthCheck");
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD");
 
@@ -156,6 +157,12 @@ const planChatSchema = z.object({
 });
 
 // POST /api/plans/:id/chat/report: a coach message, found by its timestamp in the chat.
+// The coach's health check: a yes or no to every question, and agreeing to the AI terms.
+const healthCheckSchema = z.object({
+  answers: z.object(Object.fromEntries(HEALTH_CHECK_QUESTIONS.map((key) => [key, z.boolean()]))).strict(),
+  consent: z.literal(true),
+});
+
 const coachReportSchema = z.object({
   messageAt: z.string().min(1).max(40),
   reason: z.enum(["harmful", "wrong", "offensive", "other"]),
@@ -214,4 +221,5 @@ module.exports = {
   planChatSchema,
   planGenerateSchema,
   coachReportSchema,
+  healthCheckSchema,
 };

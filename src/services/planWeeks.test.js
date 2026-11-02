@@ -513,3 +513,75 @@ test("only the coach's own messages in the chat can be reported", async () => {
   await assert.rejects(reportCoachMessage(user, "plan-1", { messageAt: "nope", reason: "other" }), (e) => e.status === 404);
   assert.equal(reports.length, 0);
 });
+
+// ── Safety: danger signs, scope, Safe mode ─────────────────────────────────
+const { newHealthCheck } = require("../utils/healthCheck");
+const { NUTRITION_REPLY } = require("../utils/safetyTriage");
+const safeUser = { ...user, age: 40, healthCheck: newHealthCheck({ heart: false, joints: true }) };
+
+test("a danger sign gets the fixed safety reply without the AI; a waiting suggestion stays", async () => {
+  await planWithProposal();
+  const { chatWithPlan } = require("./planningService");
+  const asked = prompts.length;
+  const calls = usage.calls;
+  const result = await chatWithPlan(user, "plan-1", "I got chest pain during squats today", "2026-10-16");
+  assert.equal(result.safety, true);
+  assert.match(result.message, /emergency number/);
+  assert.equal(prompts.length, asked, "no AI call");
+  assert.equal(usage.calls, calls, "nothing counted against the budget");
+  const last = storedPlan.planData._chatHistory.at(-1);
+  assert.deepEqual([last.role, last.kind], ["assistant", "safety"]);
+  assert.ok(storedPlan.planData._pendingChange, "the suggestion still waits");
+});
+
+test("a reply with a calorie target or a dose is replaced, and suggests no change", async () => {
+  aiReply = { planExplanation: "x", days: sixDayWeek };
+  await generatePlan(user, { splitPreference: "push_pull_legs" });
+  const { chatWithPlan } = require("./planningService");
+  aiReply = { message: "Eat 2,400 calories a day and take 300 mg caffeine. Also train 3 days.", modifiedDays: threeDayWeek };
+  const result = await chatWithPlan(user, "plan-1", "How much should I eat?", "2026-10-16");
+  assert.equal(result.message, NUTRITION_REPLY);
+  assert.equal(result.proposal, null);
+  assert.equal(storedPlan.planData._pendingChange, undefined);
+});
+
+test("Safe mode: a new plan is conservative, and the AI is told Safe mode, not why", async () => {
+  aiReply = { planExplanation: "x", days: ["monday", "tuesday", "wednesday"].map((day) => ({ day, exercises: [{ exerciseId: "squat", sets: 6, reps: "3-5", restSeconds: 30 }] })) };
+  const { plan } = await generatePlan(safeUser, { splitPreference: "push_pull_legs", intensity: "aggressive" });
+  for (const ex of plan.planData.weeks[0].days.flatMap((d) => d.exercises ?? [])) {
+    assert.ok(ex.sets <= 4 && ex.restSeconds >= 60 && ex.reps === "8-12", JSON.stringify(ex));
+  }
+  assert.match(prompts[0], /SAFE MODE/);
+  assert.match(prompts[0], /Intensity: conservative/);
+  assert.doesNotMatch(prompts[0], /joints/);
+});
+
+test("without Safe mode the plan keeps the AI's heavy sets", async () => {
+  aiReply = { planExplanation: "x", days: ["monday", "tuesday", "wednesday"].map((day) => ({ day, exercises: [{ exerciseId: "squat", sets: 6, reps: "3-5", restSeconds: 180 }] })) };
+  const { plan } = await generatePlan(user, { splitPreference: "push_pull_legs" });
+  const squat = plan.planData.weeks[0].days[0].exercises[0];
+  assert.deepEqual([squat.sets, squat.reps], [6, "3-5"]);
+  assert.doesNotMatch(prompts[0], /SAFE MODE/);
+});
+
+test("Safe mode: a coach change that adds a lot more training isn't suggested", async () => {
+  aiReply = { planExplanation: "x", days: sixDayWeek };
+  await generatePlan(safeUser, { splitPreference: "push_pull_legs" });
+  const { chatWithPlan } = require("./planningService");
+  const big = (d) => ({ d, m: ["chest"], min: 90, x: ["bench_press", "pull_up", "squat"].map((id) => ({ id, s: 4, r: "8-12", rest: 90 })) });
+  aiReply = { message: "More volume!", modifiedDays: [...["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].map(big), { d: "sunday", t: "rest" }] };
+  const result = await chatWithPlan(safeUser, "plan-1", "Triple my volume", "2026-10-16");
+  assert.equal(result.proposal, null);
+  assert.match(result.message, /Safe mode/);
+});
+
+test("Safe mode: a lighter change is still suggested, bounded", async () => {
+  aiReply = { planExplanation: "x", days: sixDayWeek };
+  await generatePlan(safeUser, { splitPreference: "push_pull_legs" });
+  const { chatWithPlan } = require("./planningService");
+  aiReply = { message: "I suggest Mon, Wed, Fri.", modifiedDays: threeDayWeek };
+  const result = await chatWithPlan(safeUser, "plan-1", "Make it 3 days a week", "2026-10-16");
+  assert.ok(result.proposal);
+  const days = storedPlan.planData._pendingChange.weeks[0].days;
+  assert.ok(days.flatMap((d) => d.exercises ?? []).every((ex) => ex.sets <= 4));
+});

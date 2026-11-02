@@ -1,10 +1,12 @@
 const express = require("express");
 const { verifyFirebaseToken, requireEmailVerified } = require("../middleware/authMiddleware");
 const { planGenerationLimiter, planChatLimiter } = require("../middleware/rateLimiter");
+const { requireCoachAccess } = require("../middleware/coachAccess");
 const { validate, todayFrom, substituteSchema, renamePlanSchema, planChatSchema, planGenerateSchema, coachReportSchema } = require("../middleware/validation");
 const planningService = require("../services/planningService");
 const { reportCoachMessage } = require("../services/aiReportService");
 
+// Routes that call the AI also need requireCoachAccess: adults who did the health check.
 const router = express.Router();
 router.use(verifyFirebaseToken);
 
@@ -15,7 +17,7 @@ router.get("/", async (req, res) => {
 });
 
 // A new AI plan from the profile and the plan form (each choice from a fixed list); it becomes the active plan.
-router.post("/generate", requireEmailVerified, validate(planGenerateSchema), planGenerationLimiter, async (req, res) => {
+router.post("/generate", requireEmailVerified, requireCoachAccess, validate(planGenerateSchema), planGenerationLimiter, async (req, res) => {
   const { plan, newlyUnlocked } = await planningService.generatePlan(req.user.dbUser, req.body.criteria, req.body.today);
   res.status(201).json({ success: true, data: plan, newlyUnlocked });
 });
@@ -26,13 +28,13 @@ router.get("/:id", async (req, res) => {
 });
 
 // "Next week": moves the plan on a week (from the Monday after this one), tuned to the last 7 days of training.
-router.post("/:id/recalibrate", requireEmailVerified, planGenerationLimiter, async (req, res) => {
+router.post("/:id/recalibrate", requireEmailVerified, requireCoachAccess, planGenerationLimiter, async (req, res) => {
   const plan = await planningService.recalibratePlan(req.user.dbUser, req.params.id, todayFrom(req.body));
   res.json({ success: true, data: plan });
 });
 
 // Swap one exercise for another the AI picks (same muscles, the user's equipment).
-router.post("/:id/substitute", requireEmailVerified, validate(substituteSchema), async (req, res) => {
+router.post("/:id/substitute", requireEmailVerified, requireCoachAccess, validate(substituteSchema), async (req, res) => {
   const { exerciseId, reason } = req.body;
   const plan = await planningService.substituteExercise(req.user.dbUser, req.params.id, exerciseId, reason);
   res.json({ success: true, data: plan });
@@ -56,7 +58,7 @@ router.delete("/:id", requireEmailVerified, async (req, res) => {
 });
 
 // A message to the plan coach: an answer, and maybe a suggested change (a proposal) to apply or dismiss.
-router.post("/:id/chat", requireEmailVerified, validate(planChatSchema), planChatLimiter, async (req, res) => {
+router.post("/:id/chat", requireEmailVerified, requireCoachAccess, validate(planChatSchema), planChatLimiter, async (req, res) => {
   const result = await planningService.chatWithPlan(req.user.dbUser, req.params.id, req.body.message, req.body.today);
   res.json({ success: true, data: result });
 });
