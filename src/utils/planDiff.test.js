@@ -26,7 +26,7 @@ test("an exercise that only got its fixed name isn't a change", () => {
 });
 
 test("training → rest", () => {
-  assert.deepEqual(diffPlanWeek(plan([push]), plan([rest("monday")]), 1), [{ dayIndex: 0, text: "Mon is now a rest day" }]);
+  assert.deepEqual(diffPlanWeek(plan([push]), plan([rest("monday")]), 1), [{ dayIndex: 0, text: "Mon: rest day" }]);
 });
 
 test("rest → training names the session", () => {

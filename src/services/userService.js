@@ -1,5 +1,6 @@
 const { auth } = require("../config/firebase");
 const { prisma } = require("../config/database");
+const { newHealthCheck } = require("../utils/healthCheck");
 
 function normalizeEmail(email) {
   return (email || "").trim().toLowerCase();
@@ -139,9 +140,15 @@ async function deleteAccount(firebaseUid) {
   if (errors.length > 0) throw new Error(`Account deletion incomplete: ${errors.join("; ")}`);
 }
 
+/** Saves the coach's health check (yes/no answers only) with the time the user agreed to the AI terms. */
+function saveHealthCheck(userId, answers) {
+  return prisma.user.update({ where: { id: userId }, data: { healthCheck: newHealthCheck(answers) } });
+}
+
 module.exports = {
   upsertUserByFirebaseUid,
   updateProfile,
+  saveHealthCheck,
   deleteUserEverywhere,
   deleteAccount,
 };

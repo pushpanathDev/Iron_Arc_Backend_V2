@@ -1,15 +1,17 @@
 const { groqClient, GROQ_MODEL } = require("../config/groq");
 
 /*
- * The one place that talks to the AI (Groq). It sends a prompt and expects a
- * JSON object back. Failed calls are retried twice: after a 429 it waits as
- * long as Groq asks, up to 20 s (the app gives up after 2 minutes, and a plan
- * can take two calls), after anything else 1 s, then 2 s.
+ * The one place that talks to the AI (Groq). A prompt is { system, history?, user }
+ * (see utils/planPrompts.js): the rules go in the system message and what the
+ * user wrote only ever in user messages, so it can't pose as the rules. It
+ * expects a JSON object back. Failed calls are retried twice: after a 429 it
+ * waits as long as Groq asks, up to 20 s (the app gives up after 2 minutes, and
+ * a plan can take two calls), after anything else 1 s, then 2 s.
  */
 
-const SYSTEM_PROMPT =
-  "You are an expert personal trainer. Always respond with valid JSON only. No markdown, no code fences, no explanation outside the JSON object.";
 const RETRIES = 2;
+/** Low, so plans and JSON stay consistent; the coach's wording still varies a little. */
+const TEMPERATURE = 0.3;
 const MAX_RATE_LIMIT_WAIT_MS = 20_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -25,20 +27,18 @@ function retryAfterSeconds(error) {
 /**
  * The AI's reply to `prompt`, parsed from JSON. `maxTokens` caps the reply;
  * short replies (chat, swaps) use a smaller cap to stay inside the free
- * tier's tokens-per-minute limit.
+ * tier's tokens-per-minute limit. `onUsage({ tokensIn, tokensOut })` hears
+ * about every answered attempt, so the daily budget counts what was spent.
  */
-async function askForJson(prompt, { maxTokens = 8192 } = {}) {
+async function askForJson({ system, history = [], user }, { maxTokens = 8192, onUsage } = {}) {
   let lastError;
 
   for (let attempt = 1; attempt <= RETRIES + 1; attempt++) {
     try {
       const completion = await groqClient.chat.completions.create({
         model: GROQ_MODEL,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: prompt },
-        ],
-        temperature: 0.7,
+        messages: [{ role: "system", content: system }, ...history, { role: "user", content: user }],
+        temperature: TEMPERATURE,
         max_tokens: maxTokens,
         response_format: { type: "json_object" },
       });
@@ -49,6 +49,7 @@ async function askForJson(prompt, { maxTokens = 8192 } = {}) {
       console.log(
         `[AI] attempt ${attempt}: finish=${choice?.finish_reason} · tokens in=${usage.prompt_tokens ?? "?"} out=${usage.completion_tokens ?? "?"} · ${text.length} chars`,
       );
+      onUsage?.({ tokensIn: usage.prompt_tokens ?? 0, tokensOut: usage.completion_tokens ?? 0 });
 
       // Strip code fences in case the model adds them anyway.
       return JSON.parse(text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim());

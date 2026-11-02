@@ -22,6 +22,7 @@ Check it's up: `curl http://localhost:3000/api/health`. The response includes
 ```bash
 npm test             # node --test: every *.test.js, no database or Firebase needed
 npm run lint         # ESLint
+npm run eval         # the coach eval: real conversations with the real model (needs GROQ_API_KEY)
 npm run db:migrate   # create and apply a migration after changing prisma/schema.prisma
 ```
 
@@ -73,6 +74,42 @@ src/app.js                  security headers, JSON body (50 kb), routes, 404, er
   (`utils/anonymizer.js`).
 - Groq's free tier allows about 8,000 tokens a minute, so the coach and next
   week send one compact week, not the whole plan (`utils/planChat.js`).
+- **Coach changes are suggestions.** A change from the chat waits in
+  `planData._pendingChange` until the user applies it; applying checks it again
+  against the plan as it is then.
+
+### Keeping the coach safe
+
+- **Prompts:** the rules live only in the system message; what the user typed is
+  fenced in its own tags and cleaned (`utils/aiText.js`), and replies must match a
+  strict shape (`utils/aiReplies.js`).
+- **Who may use it** (`middleware/coachAccess.js`, `utils/healthCheck.js`): adults
+  who did the health check (8 yes/no questions on the PAR-Q+ topics, plus agreeing
+  to the AI terms). Any "yes" turns on **Safe mode**: at most 4 sets, 8+ reps, 60 s
+  rest, small steps up (`planValidator`'s `SAFE_LIMITS`), and the prompt's SAFE
+  MODE rules. The AI is told only that Safe mode is on, never the answers.
+- **Before the AI** (`utils/safetyTriage.js`): danger signs (chest pain, fainting,
+  an acute injury, crisis or eating-disorder signs) get a fixed reply, without an
+  AI call.
+- **After the AI:** a reply with a calorie target, a dose or drugs, or one that
+  quotes the coach's own instructions, is replaced; every plan goes through the
+  validator's hard limits.
+- **Budgets** (`services/aiBudget.js`): AI calls and tokens per user per day, and a
+  daily cap for everyone (`AI_USER_DAILY_CALLS`, `AI_USER_DAILY_TOKENS`,
+  `AI_DAILY_TOKEN_BUDGET`).
+- **Users' say** (`services/aiReportService.js`): reports (reviewed by an admin)
+  and thumbs up/down on replies.
+
+### Evaluating the coach
+
+`npm run eval` sends every conversation in `evals/coachCases.js` through the real
+chat service and model, with an in-memory database, and grades each reply by
+rules (`evals/graders.js`): no plan change for a question, a rest day kept, Safe
+mode limits, no calorie targets, no leaked instructions, and so on. It fails if a
+critical case fails or under 85% pass. Results go to `evals/results/`. In GitHub
+Actions it runs on pull requests that change the coach, every Monday and by hand
+(`.github/workflows/coach-eval.yml`, needs the `GROQ_API_KEY` secret). Replies
+users rate thumbs down (`GET /api/admin/ai-feedback`) make good new cases.
 
 ## API
 
@@ -82,13 +119,15 @@ All responses are `{ success, data?, message? }`. Paged lists also return
 | Area | Endpoints |
 |------|-----------|
 | Health | `GET /api/health` (public) |
-| User | `POST /api/user/sync` · `GET /api/user/profile` · `PATCH /api/user/profile` · `DELETE /api/user/account` (needs a sign-in from the last 5 minutes) |
+| User | `POST /api/user/sync` · `GET /api/user/profile` · `PATCH /api/user/profile` · `PUT /api/user/health-check` · `DELETE /api/user/account` (needs a sign-in from the last 5 minutes) |
 | Workouts | `POST /api/workouts` · `POST /api/workouts/batch` (a whole session, all or nothing) · `GET /api/workouts` · `GET`/`PATCH`/`DELETE /api/workouts/:id` |
 | Body weight | `POST /api/weights` (one entry per day) · `GET /api/weights` · `GET /api/weights/latest` · `DELETE /api/weights/:id` |
 | Custom exercises | `POST /api/exercises` · `GET /api/exercises` · `DELETE /api/exercises/:id` |
 | Achievements | `GET /api/achievements` |
-| Plans | `GET /api/plans` · `POST /api/plans/generate` · `GET /api/plans/:id` · `POST /api/plans/:id/recalibrate` (next week) · `POST /api/plans/:id/substitute` · `PATCH /api/plans/:id/name` · `PATCH /api/plans/:id/activate` · `DELETE /api/plans/:id` · `POST /api/plans/:id/chat` |
-| Admin | `GET /api/admin/users` · `DELETE /api/admin/user/:uid` · `POST /api/admin/user/:uid/disable` (header `x-admin-key`; `:uid` is the Firebase UID) |
+| Plans | `GET /api/plans` · `POST /api/plans/generate` · `GET /api/plans/:id` · `POST /api/plans/:id/recalibrate` (next week) · `POST /api/plans/:id/substitute` · `PATCH /api/plans/:id/name` · `PATCH /api/plans/:id/activate` · `DELETE /api/plans/:id` · `POST /api/plans/:id/chat` · `POST /api/plans/:id/chat/report` · `POST /api/plans/:id/chat/feedback` · `POST /api/plans/:id/proposals/:proposalId/apply` · `…/dismiss` |
+| Admin | `GET /api/admin/users` · `DELETE /api/admin/user/:uid` · `POST /api/admin/user/:uid/disable` · `GET /api/admin/ai-reports` · `POST /api/admin/ai-reports/:id/reviewed` · `GET /api/admin/ai-feedback` (header `x-admin-key`; `:uid` is the Firebase UID) |
+
+Generate, next week, swap and chat need the health check (403 `HEALTH_CHECK_REQUIRED` or `COACH_ADULTS_ONLY` otherwise).
 
 **Rate limits:** 200 requests per 15 minutes per user across the API; 5 plan
 generations or "next week"s per hour (`MAX_PLAN_GENERATIONS_PER_HOUR`); 30 coach

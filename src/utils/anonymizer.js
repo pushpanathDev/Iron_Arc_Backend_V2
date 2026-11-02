@@ -1,7 +1,10 @@
+const { safeModeOf } = require("./healthCheck");
+
 /**
  * The only profile fields the AI may see: training facts, never anything that
  * identifies the person (name, email, ids, avatar). Height and weight can be
- * empty; the prompts say "not provided".
+ * empty; the prompts say "not provided". Of the health check, only whether
+ * Safe mode is on, never the answers.
  */
 function anonymizeIronArcProfile(userProfile) {
   return {
@@ -15,6 +18,7 @@ function anonymizeIronArcProfile(userProfile) {
     sessionMinutes: userProfile.sessionMinutes ?? null,
     trainingDays: Array.isArray(userProfile.trainingDays) ? userProfile.trainingDays : [],
     avoidAreas: Array.isArray(userProfile.avoidAreas) ? userProfile.avoidAreas : [],
+    safeMode: safeModeOf(userProfile),
   };
 }
 

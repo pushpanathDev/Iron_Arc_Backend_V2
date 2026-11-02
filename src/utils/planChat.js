@@ -132,15 +132,36 @@ function chatOf(planData) {
   return Array.isArray(planData?._chatHistory) ? planData._chatHistory : [];
 }
 
-/** The plan without its chat: what the AI and the validator work on. */
+/** The plan without its chat or pending proposal: what the AI and the validator work on. */
 function withoutChat(planData) {
-  const { _chatHistory, ...plan } = planData ?? {};
+  const { _chatHistory, _pendingChange, ...plan } = planData ?? {};
   return plan;
 }
 
-/** The plan with its chat: the earlier history plus new entries, keeping the last 40. */
-function withChat(plan, history, newEntries) {
-  return { ...plan, _chatHistory: [...history, ...newEntries].slice(-CHAT_HISTORY_MAX) };
+/** The coach's change waiting for the user to apply it, or null. */
+function pendingChangeOf(planData) {
+  return planData?._pendingChange ?? null;
+}
+
+/**
+ * Settles a proposal's chat entry: "applied", "dismissed", "replaced" (a newer
+ * one came) or "expired" (the plan changed under it).
+ */
+function settleProposal(history, proposalId, status) {
+  return history.map((m) =>
+    m.proposal?.id === proposalId && m.proposal.status === "pending" ? { ...m, proposal: { ...m.proposal, status }, ...(status === "applied" ? { planUpdated: true } : {}) } : m,
+  );
+}
+
+/**
+ * The plan with its chat: the earlier history plus new entries, keeping the
+ * last 40. A coach proposal survives only when it's passed back in as
+ * `pending`; any other change to the plan (a swap, next week) leaves it out of
+ * date, and its chat entry says so.
+ */
+function withChat(plan, history, newEntries, pending = null) {
+  const settled = history.map((m) => (m.proposal?.status === "pending" && m.proposal.id !== pending?.id ? { ...m, proposal: { ...m.proposal, status: "expired" } } : m));
+  return { ...plan, _chatHistory: [...settled, ...newEntries].slice(-CHAT_HISTORY_MAX), ...(pending ? { _pendingChange: pending } : {}) };
 }
 
 module.exports = {
@@ -154,4 +175,6 @@ module.exports = {
   chatOf,
   withoutChat,
   withChat,
+  pendingChangeOf,
+  settleProposal,
 };

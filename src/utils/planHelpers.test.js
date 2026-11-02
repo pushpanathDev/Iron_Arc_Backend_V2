@@ -20,14 +20,14 @@ test("each equipment choice gets only exercises it can do", () => {
 
 test("the dumbbell plan prompt no longer offers barbell or machine exercises", () => {
   const profile = { fitnessGoal: "muscle", weeklyGoal: 3, equipment: "dumbbells" };
-  const prompt = buildFirstWeekPrompt(profile, planSettings(profile));
-  const pool = prompt.split("Exercise ids only from: ")[1].split(".\n")[0].split(", ");
+  const { system } = buildFirstWeekPrompt(profile, planSettings(profile));
+  const pool = system.split("Exercise ids only from: ")[1].split(".\n")[0].split(", ");
   assert.deepEqual(pool, idsFor("dumbbells"));
   for (const id of ["bicep_curl", "rdl", "leg_curl", "incline_press", "squat"]) assert.ok(!pool.includes(id), id);
 });
 
 test("the swap prompt says when the user gave no reason", () => {
-  assert.match(buildSubstitutePrompt("squat", undefined, { fitnessGoal: "muscle" }, idsFor("full_gym")), /Reason: not given/);
+  assert.match(buildSubstitutePrompt("squat", undefined, { fitnessGoal: "muscle" }, idsFor("full_gym")).user, /<user_reason>\s*not given\s*<\/user_reason>/);
 });
 
 test("a swap without a reason (the app sends 'user_request') has none", () => {

@@ -6,8 +6,12 @@ const assert = require("node:assert/strict");
 const { stub } = require("../testing/stub");
 const express = require("express");
 
+// An adult who has done the coach's health check; tests change it to check the gate.
+const { newHealthCheck } = require("../utils/healthCheck");
+const cleared = { id: "user-1", firebaseUid: "uid-1", equipment: "full_gym", age: 30, healthCheck: newHealthCheck({}) };
+let dbUser = cleared;
 const signedIn = (req, res, next) => {
-  req.user = { uid: "uid-1", emailVerified: true, dbUser: { id: "user-1", firebaseUid: "uid-1", equipment: "full_gym" } };
+  req.user = { uid: "uid-1", emailVerified: true, dbUser };
   next();
 };
 stub("middleware/authMiddleware.js", {
@@ -34,6 +38,8 @@ stub("config/database.js", {
   prisma: {
     plan: { findFirst: async ({ where }) => (where.id === plan.id && where.userId === plan.userId ? plan : null) },
     workout: { findMany: async () => [] },
+    // Daily AI budgets: nothing used yet.
+    aiUsage: { findUnique: async () => null, aggregate: async () => ({ _sum: {} }), upsert: async () => ({}) },
   },
 });
 stub("config/firebase.js", { auth: {} });
@@ -93,4 +99,42 @@ test("swapping an exercise that isn't in the plan answers 422 without calling th
   const res = await call("POST", "/api/plans/plan-1/substitute", { exerciseId: "bench_press" });
   assert.equal(res.status, 422);
   assert.equal(aiCalls, 0);
+});
+
+test("the AI routes need the health check first: a 403 with a code the app acts on, and no AI call", async () => {
+  aiCalls = 0;
+  try {
+    dbUser = { ...cleared, healthCheck: null };
+    for (const [url, body] of [["/api/plans/generate", { criteria: {} }], ["/api/plans/plan-1/chat", { message: "hi" }], ["/api/plans/plan-1/substitute", { exerciseId: "squat" }], ["/api/plans/plan-1/recalibrate", {}]]) {
+      const res = await call("POST", url, body);
+      assert.equal(res.status, 403, url);
+      assert.equal((await res.json()).code, "HEALTH_CHECK_REQUIRED");
+    }
+    dbUser = { ...cleared, healthCheck: { ...cleared.healthCheck, version: 0 } };
+    assert.equal((await (await call("POST", "/api/plans/plan-1/chat", { message: "hi" })).json()).code, "HEALTH_CHECK_REQUIRED", "an older check is asked again");
+    assert.equal(aiCalls, 0);
+  } finally {
+    dbUser = cleared;
+  }
+});
+
+test("the coach is for adults: under 18 is a 403 COACH_ADULTS_ONLY, health check or not", async () => {
+  try {
+    dbUser = { ...cleared, age: 17 };
+    const res = await call("POST", "/api/plans/plan-1/chat", { message: "hi" });
+    assert.equal(res.status, 403);
+    assert.equal((await res.json()).code, "COACH_ADULTS_ONLY");
+  } finally {
+    dbUser = cleared;
+  }
+});
+
+test("reporting a coach reply works without the health check (it must always be possible)", async () => {
+  try {
+    dbUser = { ...cleared, age: 16, healthCheck: null };
+    const res = await call("POST", "/api/plans/plan-1/chat/report", { messageAt: "x", reason: "other" });
+    assert.notEqual(res.status, 403);
+  } finally {
+    dbUser = cleared;
+  }
 });

@@ -30,7 +30,7 @@ function dayShortName(day) {
 
 /**
  * @returns {{ dayIndex: number, text: string }[]} Monday first, e.g.
- *   "Wed is now a rest day", "Thu: Squat → Leg Press", "Mon: + Lateral Raise", "Tue: Row 4×8 → 3×10"
+ *   "Wed: rest day", "Thu: Squat → Leg Press", "Mon: + Lateral Raise", "Tue: Row 4×8 → 3×10"
  */
 function diffPlanWeek(before, after, weekNumber) {
   const a = byWeekday(weekDays(before, weekNumber));
@@ -41,7 +41,7 @@ function diffPlanWeek(before, after, weekNumber) {
     const now = b[i];
     const day = DAY_SHORT[i];
     if (isTraining(was) && !isTraining(now)) {
-      out.push({ dayIndex: i, text: `${day} is now a rest day` });
+      out.push({ dayIndex: i, text: `${day}: rest day` });
       continue;
     }
     if (!isTraining(was) && isTraining(now)) {

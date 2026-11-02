@@ -82,7 +82,7 @@ test("the plan prompt follows the training profile, with nothing that identifies
   });
   assert.deepEqual([profile.email, profile.displayName], [undefined, undefined]);
 
-  const prompt = buildFirstWeekPrompt(profile, planSettings(profile));
+  const prompt = buildFirstWeekPrompt(profile, planSettings(profile)).user;
   assert.ok(prompt.includes("- Monday: Full body") && prompt.includes("- Wednesday: Full body") && prompt.includes("- Friday: Full body"), "the chosen days, full body for 3 days");
   assert.ok(!prompt.includes("- Tuesday"));
   assert.ok(prompt.includes("Session length: 45 minutes"));
@@ -90,7 +90,7 @@ test("the plan prompt follows the training profile, with nothing that identifies
   assert.ok(prompt.includes("Progression: linear"), "progression from beginner");
   assert.ok(prompt.includes("Go easy on: knees"));
 
-  const chosen = buildFirstWeekPrompt(profile, planSettings(profile, { sessionDuration: 90, splitPreference: "upper_lower" }));
+  const chosen = buildFirstWeekPrompt(profile, planSettings(profile, { sessionDuration: 90, splitPreference: "upper_lower" })).user;
   assert.ok(chosen.includes("Session length: 90 minutes") && chosen.includes("- Monday: Upper") && chosen.includes("- Wednesday: Lower"), "the plan form overrides the profile");
 });
 

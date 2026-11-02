@@ -22,11 +22,11 @@ const BODY_ERRORS = {
 // Express recognises an error handler by its four parameters, so `next` stays.
 function errorHandler(err, req, res, next) {
   const where = `${req.method} ${req.path}`;
-  const send = (status, message) => res.status(status).json({ success: false, message });
+  const send = (status, message, code) => res.status(status).json({ success: false, message, ...(code ? { code } : {}) });
 
   if (err instanceof HttpError) {
     console.warn(`[http] ${err.status} ${where}: ${err.message}`);
-    return send(err.status, err.message);
+    return send(err.status, err.message, err.code);
   }
 
   if (PRISMA_ERRORS[err.code]) {

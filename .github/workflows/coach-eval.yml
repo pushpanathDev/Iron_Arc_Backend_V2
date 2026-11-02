@@ -1,0 +1,77 @@
+# The coach eval (evals/runCoachEval.js): real conversations with the real
+# model, graded by rules. Runs when a pull request changes the coach (prompts,
+# guards, the chat service or the eval itself), every Monday, or by hand.
+# Needs the GROQ_API_KEY repository secret; without it the job says so and
+# passes. Groq limits are per organization: a key from another Groq account keeps
+# the eval from using up the app's tokens.
+name: Coach eval
+
+on:
+  pull_request:
+    paths:
+      - "src/utils/planPrompts.js"
+      - "src/utils/safetyTriage.js"
+      - "src/utils/planValidator.js"
+      - "src/utils/aiText.js"
+      - "src/services/planningService.js"
+      - "src/services/aiClient.js"
+      - "evals/**"
+  schedule:
+    - cron: "0 3 * * 1" # Mondays, 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs per case (a case passes only if every run does)"
+        default: "1"
+      only:
+        description: "Case ids, comma-separated (empty for all)"
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coach-eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GROQ_MODEL: ${{ vars.GROQ_MODEL || 'openai/gpt-oss-120b' }}
+      EVAL_RUNS: ${{ inputs.runs || '1' }}
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
+    steps:
+      - name: Check for the Groq key
+        id: key
+        run: |
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "::notice::No GROQ_API_KEY secret, so the coach eval was skipped."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.present == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.key.outputs.present == 'true'
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        if: steps.key.outputs.present == 'true'
+      - name: Run the coach eval
+        if: steps.key.outputs.present == 'true'
+        # Through env, never pasted into the script: the input is free text.
+        env:
+          ONLY: ${{ inputs.only }}
+        run: npm run eval -- ${ONLY:+"--only=$ONLY"}
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.key.outputs.present == 'true'
+        with:
+          name: coach-eval-results
+          path: evals/results/
+          if-no-files-found: ignore

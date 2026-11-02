@@ -31,6 +31,9 @@ model User {
   trainingDays    Int[]   @default([]) @map("training_days")
   /// Areas to go easy on: knees | lower_back | shoulders | wrists
   avoidAreas      String[] @default([]) @map("avoid_areas")
+  /// The AI coach's health check (utils/healthCheck.js): { version, answers: { heart: false, … },
+  /// checkedAt, consentedAt }. Yes/no answers only; any "yes" turns on Safe mode. Null until done.
+  healthCheck     Json?   @map("health_check")
   isAdmin       Boolean  @default(false) @map("is_admin")
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at")
@@ -42,8 +45,76 @@ model User {
   customExercises CustomExercise[]
   plans           Plan[]
   planGenerations PlanGeneration[]
+  aiUsage         AiUsage[]
+  aiReports       AiReport[]
+  aiFeedback      AiFeedback[]
 
   @@map("users")
+}
+
+/// AI calls and tokens per user per UTC day: what the daily budgets check (services/aiBudget.js).
+model AiUsage {
+  id        String @id @default(uuid())
+  userId    String @map("user_id")
+  /// The UTC day, "YYYY-MM-DD".
+  day       String
+  calls     Int    @default(0)
+  tokensIn  Int    @default(0) @map("tokens_in")
+  tokensOut Int    @default(0) @map("tokens_out")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, day])
+  @@index([day])
+  @@map("ai_usage")
+}
+
+/// A coach message a user reported from the app (Google Play requires in-app
+/// reporting of AI content). A copy of the message is kept: the chat can change.
+model AiReport {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  /// The plan whose chat held the message (no foreign key: plans can be deleted).
+  planId    String   @map("plan_id")
+  /// The message's timestamp in that chat.
+  messageAt String   @map("message_at")
+  content   String
+  /// harmful | wrong | offensive | other
+  reason    String
+  note      String?
+  /// open | reviewed
+  status    String   @default("open")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, planId, messageAt])
+  @@index([status, createdAt])
+  @@map("ai_reports")
+}
+
+/// A thumbs up or down on a coach reply, from the app: how the coach does with real users.
+/// A copy of the reply is kept (the chat can change). One per reply; changing it updates the row.
+model AiFeedback {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  /// The plan whose chat held the reply (no foreign key: plans can be deleted).
+  planId    String   @map("plan_id")
+  /// The reply's timestamp in that chat.
+  messageAt String   @map("message_at")
+  content   String
+  /// chat | swap | nextWeek | safety
+  kind      String   @default("chat")
+  /// up | down
+  rating    String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, planId, messageAt])
+  @@index([createdAt])
+  @@map("ai_feedback")
 }
 
 // Append-only log of AI plan generations (plans themselves can be deleted).
