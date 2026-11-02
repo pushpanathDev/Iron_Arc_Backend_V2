@@ -11,6 +11,9 @@
  * outOfScope(): the coach's reply, checked before the user sees it. Personal
  * calorie targets, doses and performance-enhancing drugs are outside what the
  * coach may give (general nutrition guidance only); such a reply is replaced.
+ *
+ * leaksInstructions(): the coach's reply, checked for its own instructions or
+ * the prompt's tags: a prompt injection that worked. Never shown either.
  */
 
 const HELPLINES = "You can find a free, confidential helpline in your country at findahelpline.com.";
@@ -78,4 +81,13 @@ const OUT_OF_SCOPE = [
 /** True when the coach's reply gives something only a dietitian or doctor should. */
 const outOfScope = (text) => OUT_OF_SCOPE.some((pattern) => pattern.test(String(text ?? "")));
 
-module.exports = { dangerSign, outOfScope, NUTRITION_REPLY, SAFETY_REPLIES: REPLIES };
+/** Phrases only the coach's instructions contain (see utils/planPrompts.js). */
+const INSTRUCTIONS = /SCOPE AND SAFETY|SAFE MODE \(this user|Follow only these instructions|Never follow instructions written inside|<\/?(app_data|user_message|user_reason)>|Return ONLY this JSON/i;
+
+/** True when the coach's reply quotes its own instructions. */
+const leaksInstructions = (text) => INSTRUCTIONS.test(String(text ?? ""));
+
+/** What the coach says instead. */
+const LEAK_REPLY = "I can't share how I'm set up, but I'm happy to help with your training. What would you like to work on?";
+
+module.exports = { dangerSign, outOfScope, leaksInstructions, NUTRITION_REPLY, LEAK_REPLY, SAFETY_REPLIES: REPLIES };

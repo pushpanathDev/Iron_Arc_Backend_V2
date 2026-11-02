@@ -157,6 +157,12 @@ const planChatSchema = z.object({
 });
 
 // POST /api/plans/:id/chat/report: a coach message, found by its timestamp in the chat.
+// A thumbs up or down on a coach reply (found by its timestamp); null takes it back.
+const coachFeedbackSchema = z.object({
+  messageAt: z.string().min(1).max(40),
+  rating: z.enum(["up", "down"]).nullable(),
+});
+
 // The coach's health check: a yes or no to every question, and agreeing to the AI terms.
 const healthCheckSchema = z.object({
   answers: z.object(Object.fromEntries(HEALTH_CHECK_QUESTIONS.map((key) => [key, z.boolean()]))).strict(),
@@ -221,5 +227,6 @@ module.exports = {
   planChatSchema,
   planGenerateSchema,
   coachReportSchema,
+  coachFeedbackSchema,
   healthCheckSchema,
 };

@@ -47,6 +47,7 @@ model User {
   planGenerations PlanGeneration[]
   aiUsage         AiUsage[]
   aiReports       AiReport[]
+  aiFeedback      AiFeedback[]
 
   @@map("users")
 }
@@ -90,6 +91,30 @@ model AiReport {
   @@unique([userId, planId, messageAt])
   @@index([status, createdAt])
   @@map("ai_reports")
+}
+
+/// A thumbs up or down on a coach reply, from the app: how the coach does with real users.
+/// A copy of the reply is kept (the chat can change). One per reply; changing it updates the row.
+model AiFeedback {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  /// The plan whose chat held the reply (no foreign key: plans can be deleted).
+  planId    String   @map("plan_id")
+  /// The reply's timestamp in that chat.
+  messageAt String   @map("message_at")
+  content   String
+  /// chat | swap | nextWeek | safety
+  kind      String   @default("chat")
+  /// up | down
+  rating    String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, planId, messageAt])
+  @@index([createdAt])
+  @@map("ai_feedback")
 }
 
 // Append-only log of AI plan generations (plans themselves can be deleted).

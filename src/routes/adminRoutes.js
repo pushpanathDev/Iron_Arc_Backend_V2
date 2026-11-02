@@ -2,7 +2,7 @@ const express = require("express");
 const { verifyAdminKey } = require("../middleware/adminMiddleware");
 const { listUsers, disableUser } = require("../services/adminService");
 const { deleteUserEverywhere } = require("../services/userService");
-const { listReports, markReviewed } = require("../services/aiReportService");
+const { listReports, markReviewed, feedbackSummary } = require("../services/aiReportService");
 
 // Server-to-server only: every route needs the x-admin-key header.
 // :uid is the user's Firebase UID.
@@ -41,6 +41,12 @@ router.get("/ai-reports", async (req, res) => {
 router.post("/ai-reports/:id/reviewed", async (req, res) => {
   await markReviewed(req.params.id);
   res.json({ success: true, message: "Report marked reviewed." });
+});
+
+// Thumbs up/down on coach replies over the last ?days= (default 30, up to 365), with recent "down" replies to review.
+router.get("/ai-feedback", async (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 365);
+  res.json({ success: true, data: await feedbackSummary(days) });
 });
 
 module.exports = router;

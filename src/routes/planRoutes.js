@@ -2,9 +2,9 @@ const express = require("express");
 const { verifyFirebaseToken, requireEmailVerified } = require("../middleware/authMiddleware");
 const { planGenerationLimiter, planChatLimiter } = require("../middleware/rateLimiter");
 const { requireCoachAccess } = require("../middleware/coachAccess");
-const { validate, todayFrom, substituteSchema, renamePlanSchema, planChatSchema, planGenerateSchema, coachReportSchema } = require("../middleware/validation");
+const { validate, todayFrom, substituteSchema, renamePlanSchema, planChatSchema, planGenerateSchema, coachReportSchema, coachFeedbackSchema } = require("../middleware/validation");
 const planningService = require("../services/planningService");
-const { reportCoachMessage } = require("../services/aiReportService");
+const { reportCoachMessage, rateCoachMessage } = require("../services/aiReportService");
 
 // Routes that call the AI also need requireCoachAccess: adults who did the health check.
 const router = express.Router();
@@ -66,6 +66,12 @@ router.post("/:id/chat", requireEmailVerified, requireCoachAccess, validate(plan
 // Reports a coach message (Google Play requires in-app reporting of AI replies).
 router.post("/:id/chat/report", requireEmailVerified, validate(coachReportSchema), async (req, res) => {
   const result = await reportCoachMessage(req.user.dbUser, req.params.id, req.body);
+  res.json({ success: true, data: result });
+});
+
+// Thumbs up or down on a coach reply (how the coach does with real users).
+router.post("/:id/chat/feedback", requireEmailVerified, validate(coachFeedbackSchema), async (req, res) => {
+  const result = await rateCoachMessage(req.user.dbUser, req.params.id, req.body);
   res.json({ success: true, data: result });
 });
 

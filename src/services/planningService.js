@@ -3,7 +3,7 @@ const { prisma } = require("../config/database");
 const { HttpError } = require("../utils/httpError");
 const { anonymizeIronArcProfile } = require("../utils/anonymizer");
 const { safeModeOf } = require("../utils/healthCheck");
-const { dangerSign, outOfScope, NUTRITION_REPLY } = require("../utils/safetyTriage");
+const { dangerSign, outOfScope, leaksInstructions, NUTRITION_REPLY, LEAK_REPLY } = require("../utils/safetyTriage");
 const { validateAndSanitizePlan, weekProblems, saferFrom } = require("../utils/planValidator");
 const { aiText, promptText } = require("../utils/aiText");
 const { firstWeekReply, weekChangeReply, substituteReply, parseReply } = require("../utils/aiReplies");
@@ -476,13 +476,15 @@ async function chatWithPlan(user, planId, userMessage, today = dateKey()) {
   // must not lose the reply: the plan stays as it was and the reply says so.
   let message = aiText(raw?.message, 700);
   if (!message) throw new HttpError(503, unavailable);
-  // Beyond general nutrition guidance (a calorie target, a dose, drugs): replaced, with no change.
-  const beyondScope = outOfScope(message);
-  if (beyondScope) {
-    console.warn("[planChat] reply went beyond general guidance; replaced");
-    message = NUTRITION_REPLY;
+  // A reply that quotes the coach's instructions, or goes beyond general nutrition
+  // guidance (a calorie target, a dose, drugs), is replaced, with no change.
+  const replacement = leaksInstructions(message) ? LEAK_REPLY : outOfScope(message) ? NUTRITION_REPLY : null;
+  if (replacement) {
+    console.warn("[planChat] reply replaced by a guard");
+    message = replacement;
   }
-  const reply = beyondScope ? null : parseReply(weekChangeReply, raw);
+  const replaced = !!replacement;
+  const reply = replaced ? null : parseReply(weekChangeReply, raw);
   let changedPlan = null;
   const days = reply ? changedDays(reply) : null;
   if (days) {
@@ -499,7 +501,7 @@ async function chatWithPlan(user, planId, userMessage, today = dateKey()) {
       console.warn("[planChat] AI returned an invalid week; keeping the current plan");
       message = `${message} (I couldn't apply that change to your plan this time. Try asking for one change at a time.)`;
     }
-  } else if (!reply && !beyondScope && Array.isArray(raw?.modifiedDays) && raw.modifiedDays.length > 0) {
+  } else if (!reply && !replaced && Array.isArray(raw?.modifiedDays) && raw.modifiedDays.length > 0) {
     console.warn("[planChat] AI returned a malformed week; keeping the current plan");
     message = `${message} (I couldn't apply that change to your plan this time. Try asking for one change at a time.)`;
   }

@@ -15,7 +15,8 @@
     "db:studio": "npx prisma studio",
     "postinstall": "npx prisma generate",
     "test": "node --test",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "eval": "node evals/runCoachEval.js"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",
