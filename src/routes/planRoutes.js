@@ -54,9 +54,20 @@ router.delete("/:id", requireEmailVerified, async (req, res) => {
   res.json({ success: true, message: "Plan deleted." });
 });
 
-// A message to the plan coach: an answer, and maybe a change to the plan.
+// A message to the plan coach: an answer, and maybe a suggested change (a proposal) to apply or dismiss.
 router.post("/:id/chat", requireEmailVerified, validate(planChatSchema), planChatLimiter, async (req, res) => {
   const result = await planningService.chatWithPlan(req.user.dbUser, req.params.id, req.body.message, req.body.today);
+  res.json({ success: true, data: result });
+});
+
+// The user's answer to a coach proposal. Apply re-checks it against the plan as it is now.
+router.post("/:id/proposals/:proposalId/apply", requireEmailVerified, async (req, res) => {
+  const result = await planningService.applyProposal(req.user.dbUser, req.params.id, req.params.proposalId);
+  res.json({ success: true, data: result });
+});
+
+router.post("/:id/proposals/:proposalId/dismiss", requireEmailVerified, async (req, res) => {
+  const result = await planningService.dismissProposal(req.user.dbUser, req.params.id, req.params.proposalId);
   res.json({ success: true, data: result });
 });
 

@@ -1,10 +1,11 @@
+const { createHash, randomUUID } = require("node:crypto");
 const { prisma } = require("../config/database");
 const { HttpError } = require("../utils/httpError");
 const { anonymizeIronArcProfile } = require("../utils/anonymizer");
 const { validateAndSanitizePlan, weekProblems } = require("../utils/planValidator");
 const { aiText, promptText } = require("../utils/aiText");
 const { firstWeekReply, weekChangeReply, substituteReply, parseReply } = require("../utils/aiReplies");
-const { compactWeek, applyWeekChange, changedDays, chatOf, withoutChat, withChat, weekSoFar } = require("../utils/planChat");
+const { compactWeek, applyWeekChange, changedDays, chatOf, withoutChat, withChat, weekSoFar, pendingChangeOf, settleProposal } = require("../utils/planChat");
 const { diffPlanWeek, dayShortName } = require("../utils/planDiff");
 const { dateKey, addDays, withWeekday, mondayOf, shortDay } = require("../utils/dates");
 const { planHasExercise, exerciseNameIn, applySubstitution } = require("../utils/planSwap");
@@ -381,8 +382,24 @@ async function followTrainingDays(user, days) {
   return true;
 }
 
+/** Identifies a plan's weeks as they stand, so a proposal can tell if the plan changed under it. */
+function planFingerprint(planOnly, weekNumber) {
+  return createHash("sha256").update(JSON.stringify({ weekNumber: weekNumber || 1, weeks: planOnly.weeks ?? [] })).digest("hex");
+}
+
 /**
- * One message to the coach. The reply may change this week, which then
+ * Saves the plan only if nobody changed it since `plan` was read (a second
+ * device, a double tap); otherwise a 409 so the user can try again on the latest.
+ */
+async function saveIfUnchanged(plan, data, conflictMessage) {
+  const { count } = await prisma.plan.updateMany({ where: { id: plan.id, updatedAt: plan.updatedAt }, data });
+  if (count === 0) throw new HttpError(409, conflictMessage);
+}
+
+/**
+ * One message to the coach. When the reply changes the plan, nothing changes
+ * yet: the change is saved as a proposal (planData._pendingChange) for the user
+ * to apply or dismiss. A newer proposal replaces an older one. When applied, it
  * replaces this week and the ones after it (earlier weeks are history).
  * `today` is the user's date ("YYYY-MM-DD"); the server's is used without it.
  */
@@ -442,23 +459,82 @@ async function chatWithPlan(user, planId, userMessage, today = dateKey()) {
     message = `${message} (I couldn't apply that change to your plan this time. Try asking for one change at a time.)`;
   }
 
+  // A change becomes a proposal; an answer keeps any proposal still waiting.
+  const waiting = pendingChangeOf(plan.planData);
+  let pending = waiting;
+  let chat = history;
+  let changes;
+  if (changedPlan) {
+    changes = diffPlanWeek(planOnly, changedPlan, plan.weekNumber);
+    pending = { id: randomUUID(), weekNumber: plan.weekNumber || 1, basedOn: planFingerprint(planOnly, plan.weekNumber), weeks: changedPlan.weeks, createdAt: now() };
+    if (waiting) chat = settleProposal(history, waiting.id, "replaced");
+  }
   const coachReply = {
     role: "assistant",
     content: message,
     timestamp: now(),
-    ...(changedPlan ? { planUpdated: true, changes: diffPlanWeek(planOnly, changedPlan, plan.weekNumber) } : {}),
+    ...(changedPlan ? { proposal: { id: pending.id, status: "pending" }, changes } : {}),
   };
-  const planData = withChat(changedPlan ?? planOnly, history, [{ role: "user", content: userMessage, timestamp: now() }, coachReply]);
-  await prisma.plan.update({ where: { id: planId }, data: { planData } });
-  const profileUpdated = changedPlan && plan.isActive ? await followTrainingDays(user, changedPlan.weeks?.[(plan.weekNumber || 1) - 1]?.days) : false;
+  const planData = withChat(planOnly, chat, [{ role: "user", content: userMessage, timestamp: now() }, coachReply], pending);
+  await saveIfUnchanged(plan, { planData }, "Your plan changed while the coach was replying. Please send your message again.");
 
   return {
     message,
-    planUpdated: Boolean(changedPlan),
-    profileUpdated,
+    planUpdated: false,
+    proposal: changedPlan ? { id: pending.id, changes } : null,
+    profileUpdated: false,
     chatHistory: planData._chatHistory,
     planData,
   };
+}
+
+/** The proposal the user asked for, or a 409 when it's gone (applied, dismissed, replaced or expired). */
+function proposalFor(plan, proposalId) {
+  const pending = pendingChangeOf(plan.planData);
+  if (!pending || pending.id !== proposalId) throw new HttpError(409, "This suggestion is no longer available. Ask the coach again.");
+  return pending;
+}
+
+/**
+ * Applies the coach's proposal, checked again first: it must be for the plan
+ * as it is now (no swap or next week since) and still pass the plan limits.
+ * Otherwise it's marked out of date and nothing changes (409). When the active
+ * plan's training days move, the profile follows.
+ */
+async function applyProposal(user, planId, proposalId) {
+  const plan = await findOwnPlan(user.id, planId);
+  const pending = proposalFor(plan, proposalId);
+  const planOnly = withoutChat(plan.planData);
+  const history = chatOf(plan.planData);
+  const week = plan.weekNumber || 1;
+
+  let applied = null;
+  if (pending.basedOn === planFingerprint(planOnly, plan.weekNumber)) {
+    try {
+      const candidate = validateAndSanitizePlan({ ...planOnly, weeks: pending.weeks }, equipmentOf(user, plan.criteria));
+      if (weekProblems(candidate.weeks?.[week - 1]?.days).length === 0) applied = candidate;
+    } catch {
+      applied = null;
+    }
+  }
+  if (!applied) {
+    await saveIfUnchanged(plan, { planData: withChat(planOnly, settleProposal(history, proposalId, "expired"), []) }, "Your plan changed just now. Please try again.");
+    throw new HttpError(409, "Your plan changed since this suggestion, so it wasn't applied. Ask the coach again.");
+  }
+
+  const planData = withChat(applied, settleProposal(history, proposalId, "applied"), []);
+  await saveIfUnchanged(plan, { planData }, "Your plan changed just now. Please try again.");
+  const profileUpdated = plan.isActive ? await followTrainingDays(user, applied.weeks?.[week - 1]?.days) : false;
+  return { planData, chatHistory: planData._chatHistory, profileUpdated };
+}
+
+/** Leaves the plan as it is; the proposal's chat entry says it wasn't applied. */
+async function dismissProposal(user, planId, proposalId) {
+  const plan = await findOwnPlan(user.id, planId);
+  proposalFor(plan, proposalId);
+  const planData = withChat(withoutChat(plan.planData), settleProposal(chatOf(plan.planData), proposalId, "dismissed"), []);
+  await saveIfUnchanged(plan, { planData }, "Your plan changed just now. Please try again.");
+  return { planData, chatHistory: planData._chatHistory };
 }
 
 module.exports = {
@@ -471,4 +547,6 @@ module.exports = {
   activatePlan,
   deletePlan,
   chatWithPlan,
+  applyProposal,
+  dismissProposal,
 };
