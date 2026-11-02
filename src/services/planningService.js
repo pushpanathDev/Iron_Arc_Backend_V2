@@ -1,7 +1,9 @@
 const { prisma } = require("../config/database");
 const { HttpError } = require("../utils/httpError");
 const { anonymizeIronArcProfile } = require("../utils/anonymizer");
-const { validateAndSanitizePlan } = require("../utils/planValidator");
+const { validateAndSanitizePlan, weekProblems } = require("../utils/planValidator");
+const { aiText, promptText } = require("../utils/aiText");
+const { firstWeekReply, weekChangeReply, substituteReply, parseReply } = require("../utils/aiReplies");
 const { compactWeek, applyWeekChange, changedDays, chatOf, withoutChat, withChat, weekSoFar } = require("../utils/planChat");
 const { diffPlanWeek, dayShortName } = require("../utils/planDiff");
 const { dateKey, addDays, withWeekday, mondayOf, shortDay } = require("../utils/dates");
@@ -73,10 +75,24 @@ function equipmentOf(user, criteria) {
 
 const now = () => new Date().toISOString();
 
-/** A logged workout as one line for a prompt: "Wed 2026-10-14 Bench Press: 60×10, 62.5×8". */
+/** A logged workout as one line for a prompt: "Wed 2026-10-14 Bench Press: 60×10, 62.5×8". The name may be one the user typed, so it's cleaned. */
 function workoutLine(w) {
   const sets = w.sets.map((x) => (x.weight ? `${x.weight}×${x.reps}` : `${x.reps}`)).join(", ");
-  return `${withWeekday(dateKey(new Date(w.date)))} ${w.exercise}: ${sets}`;
+  return `${withWeekday(dateKey(new Date(w.date)))} ${promptText(w.exercise, 100)}: ${sets}`;
+}
+
+/**
+ * An AI change to one week, checked: the plan with it applied, or why not.
+ * The change must pass the validator's limits and the week rules (a rest day).
+ */
+function checkedWeekChange(planOnly, weekNumber, days, equipment, options) {
+  try {
+    const plan = validateAndSanitizePlan(applyWeekChange(planOnly, weekNumber, days, options), equipment);
+    const problems = weekProblems(plan.weeks?.[(weekNumber || 1) - 1]?.days);
+    return problems.length > 0 ? { problems } : { plan };
+  } catch {
+    return { problems: ["invalid week"] };
+  }
 }
 
 /** The last 5 workouts, oldest first, as context for a new plan. */
@@ -147,7 +163,7 @@ const getPlan = findOwnPlan;
 async function aiWeekOnSchedule(user, settings, unavailable) {
   const prompt = buildFirstWeekPrompt(anonymizeIronArcProfile(user), settings, await recentWorkouts(user.id));
   // One week of sessions fits well inside 4,000 tokens; the prompt plus this cap stays under Groq's per-minute limit.
-  const ask = () => askAi(prompt, { maxTokens: 4000, unavailable });
+  const ask = async () => parseReply(firstWeekReply, await askAi(prompt, { maxTokens: 4000, unavailable }));
 
   let reply = await ask();
   let days = assembleWeek(settings.schedule, reply?.days, settings.minutes);
@@ -157,7 +173,7 @@ async function aiWeekOnSchedule(user, settings, unavailable) {
     days = assembleWeek(settings.schedule, reply?.days, settings.minutes);
   }
   if (!days) throw new HttpError(503, "Could not generate a valid plan. Please try again.");
-  return { days, planExplanation: reply.planExplanation };
+  return { days, planExplanation: aiText(reply.planExplanation, 400) };
 }
 
 /**
@@ -235,24 +251,20 @@ async function recalibratePlan(user, planId, today = dateKey()) {
   /** The AI's next week, checked, or null when it sent none or an unusable one. */
   const adjust = (reply) => {
     const days = changedDays(reply);
-    if (!days) return null;
-    try {
-      return validateAndSanitizePlan(applyWeekChange(planOnly, next, days, { onlyThisWeek: true }), equipment);
-    } catch {
-      return null;
-    }
+    return days ? (checkedWeekChange(planOnly, next, days, equipment, { onlyThisWeek: true }).plan ?? null) : null;
   };
+  const ask = async () => parseReply(weekChangeReply, await askAi(prompt, { maxTokens: 3000, unavailable }));
 
   // Next week must carry the progression, so a reply without it gets one more try.
-  let reply = await askAi(prompt, { maxTokens: 3000, unavailable });
+  let reply = await ask();
   let adjusted = adjust(reply);
   if (!adjusted) {
     console.warn("[nextWeek] AI sent no usable week; asking once more");
-    reply = await askAi(prompt, { maxTokens: 3000, unavailable });
+    reply = await ask();
     adjusted = adjust(reply);
   }
   // Still nothing: the move goes ahead with next week as it stands, and says so.
-  let message = reply?.message || `Week ${next} is ready.`;
+  let message = aiText(reply?.message, 700) || `Week ${next} is ready.`;
   if (!adjusted) {
     adjusted = validateAndSanitizePlan(planOnly, equipment);
     message = `Week ${next} is ready, as planned. (I couldn't adjust it from your log this time.)`;
@@ -294,10 +306,13 @@ async function substituteExercise(user, planId, exerciseId, reason) {
   const allowed = allowedExerciseIds(equipment);
 
   const prompt = buildSubstitutePrompt(exerciseId, reason, anonymizeIronArcProfile(user), allowed);
-  const reply = await askAi(prompt, {
-    maxTokens: 400,
-    unavailable: "Couldn't find a replacement right now. Please try again in a moment.",
-  });
+  const reply = parseReply(
+    substituteReply,
+    await askAi(prompt, {
+      maxTokens: 400,
+      unavailable: "Couldn't find a replacement right now. Please try again in a moment.",
+    }),
+  );
 
   // The AI's pick if it's a different exercise the user can do, else the closest one we know.
   const pick = reply?.substituteExerciseId;
@@ -305,7 +320,7 @@ async function substituteExercise(user, planId, exerciseId, reason) {
   const newName = EXERCISE_DB[newId].name;
 
   const swapped = validateAndSanitizePlan(
-    applySubstitution(plan.planData, exerciseId, { id: newId, name: newName, reason: reply?.reason || reason || "Exercise substitution" }),
+    applySubstitution(plan.planData, exerciseId, { id: newId, name: newName, reason: aiText(reply?.reason, 160) || reason || "Exercise substitution" }),
     equipment,
   );
   const note = {
@@ -401,23 +416,30 @@ async function chatWithPlan(user, planId, userMessage, today = dateKey()) {
     logged: workouts.filter((w) => dateKey(new Date(w.date)) >= addDays(today, -7)).map(workoutLine),
     exerciseIds: allowedExerciseIds(equipment),
   });
-  const reply = await askAi(prompt, {
-    maxTokens: 3000,
-    unavailable: "The coach couldn't answer right now. Please try again in a moment.",
-  });
+  const unavailable = "The coach couldn't answer right now. Please try again in a moment.";
+  const raw = await askAi(prompt, { maxTokens: 3000, unavailable });
 
-  // A malformed or cut-off change from the AI must not lose the reply: the
-  // plan stays as it was and the reply says the change didn't go through.
-  let message = reply?.message ?? "I've processed your request.";
+  // No usable message is the same as no answer. A malformed or unsafe change
+  // must not lose the reply: the plan stays as it was and the reply says so.
+  let message = aiText(raw?.message, 700);
+  if (!message) throw new HttpError(503, unavailable);
+  const reply = parseReply(weekChangeReply, raw);
   let changedPlan = null;
-  const days = changedDays(reply);
+  const days = reply ? changedDays(reply) : null;
   if (days) {
-    try {
-      changedPlan = validateAndSanitizePlan(applyWeekChange(planOnly, plan.weekNumber, days), equipment);
-    } catch {
+    const checked = checkedWeekChange(planOnly, plan.weekNumber, days, equipment);
+    if (checked.plan) {
+      changedPlan = checked.plan;
+    } else if (checked.problems.includes("no rest day")) {
+      console.warn("[planChat] AI change left no rest day; keeping the current plan");
+      message = `${message} (I kept your plan as it was: every week needs at least one rest day.)`;
+    } else {
       console.warn("[planChat] AI returned an invalid week; keeping the current plan");
       message = `${message} (I couldn't apply that change to your plan this time. Try asking for one change at a time.)`;
     }
+  } else if (!reply && Array.isArray(raw?.modifiedDays) && raw.modifiedDays.length > 0) {
+    console.warn("[planChat] AI returned a malformed week; keeping the current plan");
+    message = `${message} (I couldn't apply that change to your plan this time. Try asking for one change at a time.)`;
   }
 
   const coachReply = {

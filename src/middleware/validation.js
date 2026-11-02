@@ -1,6 +1,20 @@
 const { z } = require("zod");
+const { plainText } = require("../utils/aiText");
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD");
+
+// Fixed vocabularies shared by the profile and the AI plan form, so prompts only ever see known values.
+const FITNESS_GOALS = ["strength", "muscle", "endurance", "weight-loss", "general"];
+const EXPERIENCE_LEVELS = ["beginner", "intermediate", "advanced"];
+const EQUIPMENT = ["full_gym", "dumbbells", "bodyweight"];
+const SESSION_MINUTES = z.union([z.literal(30), z.literal(45), z.literal(60), z.literal(90)]);
+
+/** User text that reaches the AI: hidden characters removed, trimmed, then length-checked. */
+const userText = (max, label) =>
+  z
+    .string()
+    .transform((s) => plainText(s, 10_000))
+    .pipe(z.string().min(1, `${label} is required.`).max(max, `${label} is too long (max ${max} characters).`));
 
 // 1–50 sets; weight in kg, 0 for bodyweight.
 const setsSchema = z
@@ -67,14 +81,15 @@ const profileUpdateSchema = z.object({
   authProvider: z.string().max(50).nullable().optional(),
   height: z.number().min(50).max(300).optional().nullable(),
   age: z.number().int().min(10).max(120).optional().nullable(),
-  fitnessGoal: z.string().max(200).optional().nullable(),
+  // The app's goals only: the goal reaches AI prompts, so it can't be free text.
+  fitnessGoal: z.enum(FITNESS_GOALS).optional().nullable(),
   weeklyGoal: z.number().int().min(1).max(7).optional(),
   // Target body weight in kg; null clears it. Same range the app allows for logging.
   targetWeight: z.number().min(20).max(500).nullable().optional(),
   // Training profile (onboarding). Fixed vocabularies so the plan prompt only sees known values.
-  experienceLevel: z.enum(["beginner", "intermediate", "advanced"]).nullable().optional(),
-  equipment: z.enum(["full_gym", "dumbbells", "bodyweight"]).nullable().optional(),
-  sessionMinutes: z.union([z.literal(30), z.literal(45), z.literal(60), z.literal(90)]).nullable().optional(),
+  experienceLevel: z.enum(EXPERIENCE_LEVELS).nullable().optional(),
+  equipment: z.enum(EQUIPMENT).nullable().optional(),
+  sessionMinutes: SESSION_MINUTES.nullable().optional(),
   // ISO weekdays (1 = Mon … 7 = Sun), at most 6: one rest day minimum.
   trainingDays: z
     .array(z.number().int().min(1).max(7))
@@ -92,7 +107,41 @@ const customExerciseSchema = z.object({
 const substituteSchema = z.object({
   exerciseId: z.string().min(1).max(100),
   // The app sends "user_request" when the user gave no reason.
-  reason: z.string().max(200).optional().transform((reason) => (reason && reason !== "user_request" ? reason : undefined)),
+  reason: z
+    .string()
+    .max(200)
+    .optional()
+    .transform((reason) => {
+      const clean = plainText(reason, 200);
+      return clean && clean !== "user_request" ? clean : undefined;
+    }),
+});
+
+/**
+ * POST /api/plans/generate: the plan form's choices, each from a fixed list
+ * (null or missing falls back to the profile), and the user's date. Unknown
+ * fields are dropped, so only these are saved with the plan or reach the AI.
+ */
+const planCriteriaSchema = z.object({
+  sessionDuration: SESSION_MINUTES.nullish(),
+  equipment: z.enum(EQUIPMENT).nullish(),
+  experienceLevel: z.enum(EXPERIENCE_LEVELS).nullish(),
+  splitPreference: z.enum(["full_body", "upper_lower", "push_pull_legs", "body_part"]).nullish(),
+  progressionStyle: z.enum(["linear", "undulating", "block"]).nullish(),
+  priorityMuscles: z
+    .array(z.enum(["chest", "back", "shoulders", "arms", "legs", "glutes", "core"]))
+    .max(7)
+    .transform((muscles) => [...new Set(muscles)])
+    .nullish(),
+  intensity: z.enum(["conservative", "moderate", "aggressive"]).nullish(),
+});
+
+/** Criteria without the empty choices, so the profile's values apply for them. */
+const withoutEmpty = (criteria) => Object.fromEntries(Object.entries(criteria).filter(([, value]) => value != null));
+
+const planGenerateSchema = z.object({
+  criteria: planCriteriaSchema.optional().transform((criteria) => withoutEmpty(criteria ?? {})),
+  today: isoDate.optional(),
 });
 
 // Longer names are cut to 60 characters rather than rejected.
@@ -101,7 +150,7 @@ const renamePlanSchema = z.object({
 });
 
 const planChatSchema = z.object({
-  message: z.string().trim().min(1, "Message is required.").max(1000, "Message is too long (max 1000 characters)."),
+  message: userText(1000, "Message"),
   // The user's own date, so the coach knows where in the week they are. Older apps don't send it.
   today: isoDate.optional(),
 });
@@ -152,4 +201,5 @@ module.exports = {
   substituteSchema,
   renamePlanSchema,
   planChatSchema,
+  planGenerateSchema,
 };

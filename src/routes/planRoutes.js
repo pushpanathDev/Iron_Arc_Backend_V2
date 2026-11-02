@@ -1,7 +1,7 @@
 const express = require("express");
 const { verifyFirebaseToken, requireEmailVerified } = require("../middleware/authMiddleware");
 const { planGenerationLimiter, planChatLimiter } = require("../middleware/rateLimiter");
-const { validate, todayFrom, substituteSchema, renamePlanSchema, planChatSchema } = require("../middleware/validation");
+const { validate, todayFrom, substituteSchema, renamePlanSchema, planChatSchema, planGenerateSchema } = require("../middleware/validation");
 const planningService = require("../services/planningService");
 
 const router = express.Router();
@@ -13,9 +13,9 @@ router.get("/", async (req, res) => {
   res.json({ success: true, data: plans });
 });
 
-// A new AI plan from the profile and the plan form; it becomes the active plan.
-router.post("/generate", requireEmailVerified, planGenerationLimiter, async (req, res) => {
-  const { plan, newlyUnlocked } = await planningService.generatePlan(req.user.dbUser, req.body?.criteria ?? {}, todayFrom(req.body));
+// A new AI plan from the profile and the plan form (each choice from a fixed list); it becomes the active plan.
+router.post("/generate", requireEmailVerified, validate(planGenerateSchema), planGenerationLimiter, async (req, res) => {
+  const { plan, newlyUnlocked } = await planningService.generatePlan(req.user.dbUser, req.body.criteria, req.body.today);
   res.status(201).json({ success: true, data: plan, newlyUnlocked });
 });
 
