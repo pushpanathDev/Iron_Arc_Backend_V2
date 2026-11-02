@@ -34,6 +34,8 @@ stub("config/database.js", {
   prisma: {
     plan: { findFirst: async ({ where }) => (where.id === plan.id && where.userId === plan.userId ? plan : null) },
     workout: { findMany: async () => [] },
+    // Daily AI budgets: nothing used yet.
+    aiUsage: { findUnique: async () => null, aggregate: async () => ({ _sum: {} }), upsert: async () => ({}) },
   },
 });
 stub("config/firebase.js", { auth: {} });

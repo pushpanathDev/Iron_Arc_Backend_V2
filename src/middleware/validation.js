@@ -155,6 +155,17 @@ const planChatSchema = z.object({
   today: isoDate.optional(),
 });
 
+// POST /api/plans/:id/chat/report: a coach message, found by its timestamp in the chat.
+const coachReportSchema = z.object({
+  messageAt: z.string().min(1).max(40),
+  reason: z.enum(["harmful", "wrong", "offensive", "other"]),
+  note: z
+    .string()
+    .max(300)
+    .optional()
+    .transform((note) => plainText(note, 300) || undefined),
+});
+
 /**
  * The user's own date ("YYYY-MM-DD") from a request body, when it's a valid
  * one; plans use it to place weeks on the calendar. Older apps don't send it.
@@ -202,4 +213,5 @@ module.exports = {
   renamePlanSchema,
   planChatSchema,
   planGenerateSchema,
+  coachReportSchema,
 };

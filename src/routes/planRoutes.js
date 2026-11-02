@@ -1,8 +1,9 @@
 const express = require("express");
 const { verifyFirebaseToken, requireEmailVerified } = require("../middleware/authMiddleware");
 const { planGenerationLimiter, planChatLimiter } = require("../middleware/rateLimiter");
-const { validate, todayFrom, substituteSchema, renamePlanSchema, planChatSchema, planGenerateSchema } = require("../middleware/validation");
+const { validate, todayFrom, substituteSchema, renamePlanSchema, planChatSchema, planGenerateSchema, coachReportSchema } = require("../middleware/validation");
 const planningService = require("../services/planningService");
+const { reportCoachMessage } = require("../services/aiReportService");
 
 const router = express.Router();
 router.use(verifyFirebaseToken);
@@ -57,6 +58,12 @@ router.delete("/:id", requireEmailVerified, async (req, res) => {
 // A message to the plan coach: an answer, and maybe a suggested change (a proposal) to apply or dismiss.
 router.post("/:id/chat", requireEmailVerified, validate(planChatSchema), planChatLimiter, async (req, res) => {
   const result = await planningService.chatWithPlan(req.user.dbUser, req.params.id, req.body.message, req.body.today);
+  res.json({ success: true, data: result });
+});
+
+// Reports a coach message (Google Play requires in-app reporting of AI replies).
+router.post("/:id/chat/report", requireEmailVerified, validate(coachReportSchema), async (req, res) => {
+  const result = await reportCoachMessage(req.user.dbUser, req.params.id, req.body);
   res.json({ success: true, data: result });
 });
 

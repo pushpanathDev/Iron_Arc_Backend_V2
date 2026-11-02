@@ -27,9 +27,10 @@ function retryAfterSeconds(error) {
 /**
  * The AI's reply to `prompt`, parsed from JSON. `maxTokens` caps the reply;
  * short replies (chat, swaps) use a smaller cap to stay inside the free
- * tier's tokens-per-minute limit.
+ * tier's tokens-per-minute limit. `onUsage({ tokensIn, tokensOut })` hears
+ * about every answered attempt, so the daily budget counts what was spent.
  */
-async function askForJson({ system, history = [], user }, { maxTokens = 8192 } = {}) {
+async function askForJson({ system, history = [], user }, { maxTokens = 8192, onUsage } = {}) {
   let lastError;
 
   for (let attempt = 1; attempt <= RETRIES + 1; attempt++) {
@@ -48,6 +49,7 @@ async function askForJson({ system, history = [], user }, { maxTokens = 8192 } =
       console.log(
         `[AI] attempt ${attempt}: finish=${choice?.finish_reason} · tokens in=${usage.prompt_tokens ?? "?"} out=${usage.completion_tokens ?? "?"} · ${text.length} chars`,
       );
+      onUsage?.({ tokensIn: usage.prompt_tokens ?? 0, tokensOut: usage.completion_tokens ?? 0 });
 
       // Strip code fences in case the model adds them anyway.
       return JSON.parse(text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim());

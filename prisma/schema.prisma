@@ -42,8 +42,51 @@ model User {
   customExercises CustomExercise[]
   plans           Plan[]
   planGenerations PlanGeneration[]
+  aiUsage         AiUsage[]
+  aiReports       AiReport[]
 
   @@map("users")
+}
+
+/// AI calls and tokens per user per UTC day: what the daily budgets check (services/aiBudget.js).
+model AiUsage {
+  id        String @id @default(uuid())
+  userId    String @map("user_id")
+  /// The UTC day, "YYYY-MM-DD".
+  day       String
+  calls     Int    @default(0)
+  tokensIn  Int    @default(0) @map("tokens_in")
+  tokensOut Int    @default(0) @map("tokens_out")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, day])
+  @@index([day])
+  @@map("ai_usage")
+}
+
+/// A coach message a user reported from the app (Google Play requires in-app
+/// reporting of AI content). A copy of the message is kept: the chat can change.
+model AiReport {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  /// The plan whose chat held the message (no foreign key: plans can be deleted).
+  planId    String   @map("plan_id")
+  /// The message's timestamp in that chat.
+  messageAt String   @map("message_at")
+  content   String
+  /// harmful | wrong | offensive | other
+  reason    String
+  note      String?
+  /// open | reviewed
+  status    String   @default("open")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, planId, messageAt])
+  @@index([status, createdAt])
+  @@map("ai_reports")
 }
 
 // Append-only log of AI plan generations (plans themselves can be deleted).

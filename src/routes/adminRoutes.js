@@ -2,6 +2,7 @@ const express = require("express");
 const { verifyAdminKey } = require("../middleware/adminMiddleware");
 const { listUsers, disableUser } = require("../services/adminService");
 const { deleteUserEverywhere } = require("../services/userService");
+const { listReports, markReviewed } = require("../services/aiReportService");
 
 // Server-to-server only: every route needs the x-admin-key header.
 // :uid is the user's Firebase UID.
@@ -29,6 +30,17 @@ router.get("/users", async (req, res) => {
 router.post("/user/:uid/disable", async (req, res) => {
   await disableUser(req.params.uid);
   res.json({ success: true, message: "User disabled." });
+});
+
+// Coach messages users reported from the app. ?status=open (default) or reviewed.
+router.get("/ai-reports", async (req, res) => {
+  const status = req.query.status === "reviewed" ? "reviewed" : "open";
+  res.json({ success: true, data: await listReports(status) });
+});
+
+router.post("/ai-reports/:id/reviewed", async (req, res) => {
+  await markReviewed(req.params.id);
+  res.json({ success: true, message: "Report marked reviewed." });
 });
 
 module.exports = router;

@@ -27,6 +27,7 @@ const {
 } = require("../utils/planSchedule");
 const { WEEKDAYS } = require("../utils/planChat");
 const { askForJson } = require("./aiClient");
+const { checkAiBudget, recordAiUsage } = require("./aiBudget");
 const { evaluateAchievementsSafely } = require("./achievementService");
 
 /*
@@ -57,15 +58,25 @@ async function checkOwnPlan(userId, planId) {
 }
 
 /**
- * The AI's JSON reply. If the AI can't answer (down, rate-limited, cut-off
- * reply), the user gets `unavailable` as a 503 and can simply try again.
+ * The AI's JSON reply, for `userId`. The daily budgets are checked first (their
+ * 429 or 503 reaches the user as it is), and the call is counted after, tokens
+ * of every attempt included. If the AI can't answer (down, rate-limited,
+ * cut-off reply), the user gets `unavailable` as a 503 and can simply try again.
  */
-async function askAi(prompt, { unavailable, maxTokens }) {
+async function askAi(prompt, { userId, unavailable, maxTokens }) {
+  await checkAiBudget(userId);
+  const spent = { tokensIn: 0, tokensOut: 0 };
+  const onUsage = ({ tokensIn, tokensOut }) => {
+    spent.tokensIn += tokensIn;
+    spent.tokensOut += tokensOut;
+  };
   try {
-    return await askForJson(prompt, { maxTokens });
+    return await askForJson(prompt, { maxTokens, onUsage });
   } catch (error) {
     console.warn(`[AI] call failed: ${error.message}`);
     throw new HttpError(503, unavailable);
+  } finally {
+    await recordAiUsage(userId, spent);
   }
 }
 
@@ -164,7 +175,7 @@ const getPlan = findOwnPlan;
 async function aiWeekOnSchedule(user, settings, unavailable) {
   const prompt = buildFirstWeekPrompt(anonymizeIronArcProfile(user), settings, await recentWorkouts(user.id));
   // One week of sessions fits well inside 4,000 tokens; the prompt plus this cap stays under Groq's per-minute limit.
-  const ask = async () => parseReply(firstWeekReply, await askAi(prompt, { maxTokens: 4000, unavailable }));
+  const ask = async () => parseReply(firstWeekReply, await askAi(prompt, { userId: user.id, maxTokens: 4000, unavailable }));
 
   let reply = await ask();
   let days = assembleWeek(settings.schedule, reply?.days, settings.minutes);
@@ -254,7 +265,7 @@ async function recalibratePlan(user, planId, today = dateKey()) {
     const days = changedDays(reply);
     return days ? (checkedWeekChange(planOnly, next, days, equipment, { onlyThisWeek: true }).plan ?? null) : null;
   };
-  const ask = async () => parseReply(weekChangeReply, await askAi(prompt, { maxTokens: 3000, unavailable }));
+  const ask = async () => parseReply(weekChangeReply, await askAi(prompt, { userId: user.id, maxTokens: 3000, unavailable }));
 
   // Next week must carry the progression, so a reply without it gets one more try.
   let reply = await ask();
@@ -310,6 +321,7 @@ async function substituteExercise(user, planId, exerciseId, reason) {
   const reply = parseReply(
     substituteReply,
     await askAi(prompt, {
+      userId: user.id,
       maxTokens: 400,
       unavailable: "Couldn't find a replacement right now. Please try again in a moment.",
     }),
@@ -434,7 +446,7 @@ async function chatWithPlan(user, planId, userMessage, today = dateKey()) {
     exerciseIds: allowedExerciseIds(equipment),
   });
   const unavailable = "The coach couldn't answer right now. Please try again in a moment.";
-  const raw = await askAi(prompt, { maxTokens: 3000, unavailable });
+  const raw = await askAi(prompt, { userId: user.id, maxTokens: 3000, unavailable });
 
   // No usable message is the same as no answer. A malformed or unsafe change
   // must not lose the reply: the plan stays as it was and the reply says so.

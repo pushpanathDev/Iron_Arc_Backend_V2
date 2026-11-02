@@ -25,6 +25,8 @@ stub("config/groq.js", {
 
 let storedPlan;
 let version = 0; // the plan's updatedAt, as a counter
+let usage = null; // today's ai_usage row for the user
+let reports = [];
 let profileUpdates = [];
 const tx = {
   plan: {
@@ -49,6 +51,23 @@ stub("config/database.js", {
         return { count: 1 };
       },
     },
+    // Daily AI budgets: one user's row, counted like the real upsert.
+    aiUsage: {
+      findUnique: async () => usage,
+      aggregate: async () => ({ _sum: { tokensIn: usage?.tokensIn ?? 0, tokensOut: usage?.tokensOut ?? 0 } }),
+      upsert: async ({ create, update }) =>
+        (usage = usage
+          ? { ...usage, calls: usage.calls + update.calls.increment, tokensIn: usage.tokensIn + update.tokensIn.increment, tokensOut: usage.tokensOut + update.tokensOut.increment }
+          : { ...create }),
+    },
+    // Reported coach messages; one report per message, like the unique key.
+    aiReport: {
+      create: async ({ data }) => {
+        if (reports.some((r) => r.planId === data.planId && r.messageAt === data.messageAt)) throw Object.assign(new Error("unique"), { code: "P2002" });
+        reports.push(data);
+        return data;
+      },
+    },
   },
 });
 stub("services/achievementService.js", { evaluateAchievementsSafely: async () => [] });
@@ -70,6 +89,8 @@ beforeEach(() => {
   workouts = [];
   profileUpdates = [];
   storedPlan = null;
+  usage = null;
+  reports = [];
 });
 
 test("a 6-day Push/Pull/Legs plan gets all 6 days, even when the AI writes only 3", async () => {
@@ -415,4 +436,80 @@ test("a save that loses a race is a 409, not an overwrite", async () => {
   const chat = chatWithPlan(user, "plan-1", "hi", "2026-10-16");
   storedPlan = { ...realFind, updatedAt: new Date(++version) };
   await assert.rejects(chat, (e) => e.status === 409);
+});
+
+// ── Daily AI budgets ───────────────────────────────────────────────────────
+const withEnv = async (vars, fn) => {
+  const before = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, vars);
+  try {
+    await fn();
+  } finally {
+    for (const [k, v] of Object.entries(before)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  }
+};
+
+test("every AI call is counted against the user's day", async () => {
+  aiReply = { planExplanation: "x", days: sixDayWeek };
+  await generatePlan(user, { splitPreference: "push_pull_legs" });
+  const { chatWithPlan } = require("./planningService");
+  aiReply = { message: "Rest 90 seconds.", modifiedDays: null };
+  await chatWithPlan(user, "plan-1", "How long should I rest?", "2026-10-16");
+  assert.equal(usage.calls, 2);
+  assert.equal(usage.userId, "user-1");
+});
+
+test("over the user's daily limit: a 429, and the AI isn't called", async () => {
+  aiReply = { planExplanation: "x", days: sixDayWeek };
+  await generatePlan(user, { splitPreference: "push_pull_legs" });
+  const { chatWithPlan } = require("./planningService");
+  await withEnv({ AI_USER_DAILY_CALLS: "2" }, async () => {
+    usage = { ...usage, calls: 2 };
+    const before = prompts.length;
+    await assert.rejects(chatWithPlan(user, "plan-1", "hi", "2026-10-16"), (e) => e.status === 429 && /today's limit/.test(e.message));
+    assert.equal(prompts.length, before, "no AI call");
+  });
+});
+
+test("everyone's daily budget used up: the coach rests (503) instead of failing for all", async () => {
+  aiReply = { planExplanation: "x", days: sixDayWeek };
+  await generatePlan(user, { splitPreference: "push_pull_legs" });
+  const { chatWithPlan } = require("./planningService");
+  await withEnv({ AI_DAILY_TOKEN_BUDGET: "1000" }, async () => {
+    usage = { ...usage, tokensIn: 900, tokensOut: 200 };
+    await assert.rejects(chatWithPlan(user, "plan-1", "hi", "2026-10-16"), (e) => e.status === 503 && /resting for today/.test(e.message));
+  });
+});
+
+// ── Reporting a coach message ──────────────────────────────────────────────
+test("a coach message can be reported once, with a copy kept; the chat marks it", async () => {
+  aiReply = { planExplanation: "x", days: sixDayWeek };
+  await generatePlan(user, { splitPreference: "push_pull_legs" });
+  const { chatWithPlan } = require("./planningService");
+  const { reportCoachMessage } = require("./aiReportService");
+  aiReply = { message: "Do 50 sets of squats every day.", modifiedDays: null };
+  await chatWithPlan(user, "plan-1", "Advice?", "2026-10-16");
+  const coach = storedPlan.planData._chatHistory.at(-1);
+
+  const result = await reportCoachMessage(user, "plan-1", { messageAt: coach.timestamp, reason: "harmful", note: "unsafe" });
+  assert.deepEqual(reports.map((r) => [r.userId, r.reason, r.content, r.note]), [["user-1", "harmful", "Do 50 sets of squats every day.", "unsafe"]]);
+  assert.equal(result.chatHistory.at(-1).reported, true);
+  assert.equal(storedPlan.planData._chatHistory.at(-1).reported, true);
+
+  await reportCoachMessage(user, "plan-1", { messageAt: coach.timestamp, reason: "wrong" });
+  assert.equal(reports.length, 1, "reporting again keeps the first report");
+});
+
+test("only the coach's own messages in the chat can be reported", async () => {
+  aiReply = { planExplanation: "x", days: sixDayWeek };
+  await generatePlan(user, { splitPreference: "push_pull_legs" });
+  const { chatWithPlan } = require("./planningService");
+  const { reportCoachMessage } = require("./aiReportService");
+  aiReply = { message: "ok", modifiedDays: null };
+  await chatWithPlan(user, "plan-1", "hello", "2026-10-16");
+  const mine = storedPlan.planData._chatHistory.find((m) => m.role === "user");
+  storedPlan.planData._chatHistory = storedPlan.planData._chatHistory.map((m) => (m === mine ? { ...m, timestamp: "2026-10-16T09:00:00.000Z" } : m));
+  await assert.rejects(reportCoachMessage(user, "plan-1", { messageAt: "2026-10-16T09:00:00.000Z", reason: "other" }), (e) => e.status === 404);
+  await assert.rejects(reportCoachMessage(user, "plan-1", { messageAt: "nope", reason: "other" }), (e) => e.status === 404);
+  assert.equal(reports.length, 0);
 });
