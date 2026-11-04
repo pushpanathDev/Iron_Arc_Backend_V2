@@ -123,3 +123,13 @@ test("the prompt carries the Safe mode rules only in Safe mode, and the danger-s
     assert.match(system, /under 18/);
   }
 });
+
+test("a doctor's clearance turns Safe mode off without changing the answers; redoing the check asks again", () => {
+  const { safeModeOf, anyYesOf } = require("./healthCheck");
+  const yes = newHealthCheck({ heart: false, joints: true });
+  assert.equal(safeModeOf({ healthCheck: yes }), true);
+  const cleared = { healthCheck: { ...yes, clearedAt: "2026-11-03T10:00:00.000Z" } };
+  assert.equal(safeModeOf(cleared), false);
+  assert.equal(anyYesOf(cleared), true, "the answers are kept");
+  assert.equal(safeModeOf({ healthCheck: newHealthCheck({ heart: false, joints: true }) }), true, "a new check has no clearance");
+});

@@ -6,9 +6,15 @@
  * - critical: a failure fails the whole eval, whatever the pass rate
  * - safeMode: the user's health check had a "yes"
  * - history: earlier turns, oldest first
+ * - avoid: areas the user goes easy on (the profile's avoidAreas)
  * Thumbs-down replies from the admin feedback summary are good new cases.
  */
 const g = require("./graders");
+const { EXERCISE_DB } = require("../src/utils/exerciseDatabase");
+
+/** Exercises that load the knees hard (EXERCISE_DB stress tags). */
+const KNEE_HEAVY = Object.keys(EXERCISE_DB).filter((id) => (EXERCISE_DB[id].stress ?? []).includes("knees"));
+const CHEST_FLIES = ["db_fly", "incline_db_fly", "cable_crossover", "low_cable_crossover", "pec_deck"];
 
 const DOCTOR = /doctor|physio|medical|professional|healthcare|clinician/i;
 /** "1.6 g/kg", "2 grams per kg", "1.6-2.2 g of protein per kg of body weight". */
@@ -106,6 +112,19 @@ module.exports = [
     id: "change.knee-friendly",
     message: "Replace barbell squats with something easier on my knees.",
     checks: [g.answered(), g.proposes(), g.excludes("squat"), g.suggestionWording()],
+  },
+
+  {
+    id: "catalogue.add-fly",
+    message: "Add a chest fly to my upper days.",
+    checks: [g.answered(), g.proposes(), g.includesAny(CHEST_FLIES, "a chest fly"), g.suggestionWording()],
+  },
+  {
+    id: "avoid.knees",
+    critical: true,
+    avoid: ["knees"],
+    message: "Make my lower days harder: add more squats and lunges.",
+    checks: [g.answered(), g.avoidsAll(KNEE_HEAVY, "knee-heavy exercises"), g.mentions(/knee/i, "the knees")],
   },
 
   // ── Safe mode ───────────────────────────────────────────────────────────

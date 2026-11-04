@@ -1,6 +1,7 @@
 const { z } = require("zod");
 const { plainText } = require("../utils/aiText");
 const { HEALTH_CHECK_QUESTIONS } = require("../utils/healthCheck");
+const { PLAN_IDS } = require("../utils/billing");
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD");
 
@@ -98,6 +99,13 @@ const profileUpdateSchema = z.object({
     .refine((days) => new Set(days).size === days.length, "training days must not repeat")
     .optional(),
   avoidAreas: z.array(z.enum(["knees", "lower_back", "shoulders", "wrists"])).max(4).optional(),
+  // "Go easy on → Other", in the user's own words; empty clears it.
+  avoidNote: z
+    .string()
+    .max(200)
+    .nullable()
+    .optional()
+    .transform((note) => (note == null ? note : plainText(note, 200) || null)),
 });
 
 const customExerciseSchema = z.object({
@@ -164,9 +172,38 @@ const coachFeedbackSchema = z.object({
 });
 
 // The coach's health check: a yes or no to every question, and agreeing to the AI terms.
+// "My doctor has cleared me" (true), or taking it back (false).
+const clearanceSchema = z.object({ cleared: z.boolean() }).strict();
+
 const healthCheckSchema = z.object({
   answers: z.object(Object.fromEntries(HEALTH_CHECK_QUESTIONS.map((key) => [key, z.boolean()]))).strict(),
   consent: z.literal(true),
+});
+
+// The app's settings for an account (some or all of them). Theme names are checked by the app,
+// which knows its themes; the server only keeps them short and simple.
+const barEntry = z.object({ value: z.number().min(0).max(1000), unit: z.enum(["kg", "lbs"]) }).strict();
+const preferencesSchema = z
+  .object({
+    theme: z.string().regex(/^[a-z-]{1,32}$/),
+    unit: z.enum(["kg", "lbs"]),
+    defaultReps: z.number().int().min(1).max(100).nullable(),
+    barWeights: z
+      .record(z.string().min(1).max(80), barEntry)
+      .refine((bars) => Object.keys(bars).length <= 300, "at most 300 bars"),
+  })
+  .partial()
+  .strict()
+  .refine((prefs) => Object.keys(prefs).length > 0, "nothing to save");
+
+// Iron Arc Pro checkout: the plan, and a key the app makes once per checkout (the same for a retried Pay).
+const checkoutSchema = z.object({
+  plan: z.enum(PLAN_IDS),
+  key: z.string().regex(/^[A-Za-z0-9-]{8,64}$/, "key must be 8-64 letters, digits or dashes"),
+});
+
+const changePlanSchema = z.object({
+  plan: z.enum(PLAN_IDS),
 });
 
 const coachReportSchema = z.object({
@@ -229,4 +266,8 @@ module.exports = {
   coachReportSchema,
   coachFeedbackSchema,
   healthCheckSchema,
+  clearanceSchema,
+  checkoutSchema,
+  changePlanSchema,
+  preferencesSchema,
 };

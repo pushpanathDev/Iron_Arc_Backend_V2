@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { equipmentTagsFor, getSubstituteExerciseId, EXERCISE_DB } = require("./exerciseDatabase");
+const { equipmentTagsFor, getSubstituteExerciseId, EXERCISE_DB, allowedExerciseIds, avoidAreasOf, STRESS_AREAS, ruledOutIn, goEasySwapNote } = require("./exerciseDatabase");
 const { validateAndSanitizePlan } = require("./planValidator");
 
 const trainingDay = (targetMuscles, exercises) => ({ weeks: [{ week: 1, days: [{ day: "monday", sessionType: "training", targetMuscles, exercises }] }] });
@@ -21,7 +21,8 @@ test("a swap fits the user's equipment and trains the same muscles", () => {
 });
 
 test("a gym user's swap can use gym equipment (it used to be bodyweight only)", () => {
-  assert.equal(getSubstituteExerciseId("bench_press", equipmentTagsFor("full_gym")), "dumbbell_press");
+  const gym = getSubstituteExerciseId("bench_press", equipmentTagsFor("full_gym"));
+  assert.ok(gym !== "bench_press" && EXERCISE_DB[gym].muscles.includes("chest") && EXERCISE_DB[gym].equipment.length > 0, gym);
   assert.equal(getSubstituteExerciseId("bench_press", equipmentTagsFor("bodyweight")), "push_up");
 });
 
@@ -64,4 +65,81 @@ test("an exercise without a progression note gets one that fits its reps", () =>
     ["lat_pulldown", "The AI's own note"],
     ["plank", "Hold 5–10 seconds longer once every set reaches 45 seconds"],
   ]);
+});
+
+// ── The bigger catalogue and "Go easy on" ─────────────────────────────────
+test("every exercise is well formed: a known order, muscles, equipment and stress areas", () => {
+  const tags = new Set(equipmentTagsFor("full_gym"));
+  for (const [id, ex] of Object.entries(EXERCISE_DB)) {
+    assert.ok([1, 2, 3, 4].includes(ex.order), id);
+    assert.ok(ex.equipment.every((t) => tags.has(t)), id);
+    assert.ok((ex.stress ?? []).every((a) => STRESS_AREAS.includes(a)), id);
+  }
+});
+
+test("a full gym gets flies, crossovers and machine work; dumbbells and bodyweight only what they can do", () => {
+  const gym = allowedExerciseIds(equipmentTagsFor("full_gym"));
+  for (const id of ["db_fly", "cable_crossover", "pec_deck", "face_pull", "leg_extension", "hip_thrust", "hammer_curl", "skull_crusher"]) assert.ok(gym.includes(id), id);
+  assert.ok(allowedExerciseIds(equipmentTagsFor("dumbbells")).every((id) => EXERCISE_DB[id].equipment.every((t) => ["dumbbells", "pull_up_bar", "jump_rope"].includes(t))));
+  assert.ok(!allowedExerciseIds(equipmentTagsFor("bodyweight")).includes("db_fly"));
+});
+
+test("going easy on knees leaves out squats, lunges and jumps, and keeps the leg press", () => {
+  const ids = allowedExerciseIds(equipmentTagsFor("full_gym"), ["knees"]);
+  for (const id of ["squat", "front_squat", "lunge", "bulgarian_split_squat", "leg_extension", "jump_rope", "burpee"]) assert.ok(!ids.includes(id), id);
+  for (const id of ["leg_press", "leg_curl", "hip_thrust", "glute_bridge"]) assert.ok(ids.includes(id), id);
+});
+
+test("an exercise the user goes easy on is replaced, for the same muscles, even when the AI names it", () => {
+  const plan = validateAndSanitizePlan(trainingDay(["quads", "glutes"], [{ exerciseId: "squat", name: "Barbell Back Squat", sets: 3, reps: "8" }]), equipmentTagsFor("full_gym"), { avoid: ["knees"] });
+  const [ex] = exercisesOf(plan);
+  assert.notEqual(ex.exerciseId, "squat");
+  assert.ok(!(EXERCISE_DB[ex.exerciseId].stress ?? []).includes("knees"), ex.exerciseId);
+  assert.ok(EXERCISE_DB[ex.exerciseId].muscles.includes("quads"), ex.exerciseId);
+});
+
+test("two exercises replaced in one day never become the same one", () => {
+  const plan = validateAndSanitizePlan(
+    trainingDay(["quads", "glutes"], [
+      { exerciseId: "squat", name: "Barbell Back Squat" },
+      { exerciseId: "lunge", name: "Walking Lunges" },
+      { exerciseId: "bulgarian_split_squat", name: "Bulgarian Split Squat" },
+    ]),
+    equipmentTagsFor("full_gym"),
+    { avoid: ["knees"] },
+  );
+  const ids = exercisesOf(plan).map((ex) => ex.exerciseId);
+  assert.equal(new Set(ids).size, ids.length, ids.join(", "));
+});
+
+test("going easy on an area leaves past weeks as they were logged (fromWeek)", () => {
+  const legs = (week) => ({ week, days: [{ day: "monday", sessionType: "training", targetMuscles: ["quads", "glutes"], exercises: [{ exerciseId: "squat", name: "Barbell Back Squat" }] }] });
+  const plan = validateAndSanitizePlan({ weeks: [legs(1), legs(2), legs(3)] }, equipmentTagsFor("full_gym"), { avoid: ["knees"], fromWeek: 2 });
+  assert.equal(plan.weeks[0].days[0].exercises[0].exerciseId, "squat", "week 1 is past");
+  assert.notEqual(plan.weeks[1].days[0].exercises[0].exerciseId, "squat");
+  assert.notEqual(plan.weeks[2].days[0].exercises[0].exerciseId, "squat");
+});
+
+test("an exercise the equipment can't do is replaced too (not only made-up ones)", () => {
+  const plan = validateAndSanitizePlan(trainingDay(["chest"], [{ exerciseId: "pec_deck", name: "Pec Deck Machine" }]), equipmentTagsFor("dumbbells"));
+  assert.ok(fits(exercisesOf(plan)[0].exerciseId, "dumbbells"));
+});
+
+test("swaps stay kind to the areas the user goes easy on", () => {
+  const swap = getSubstituteExerciseId("bench_press", equipmentTagsFor("bodyweight"), ["wrists"]);
+  assert.ok(!(EXERCISE_DB[swap].stress ?? []).includes("wrists"), swap);
+  assert.deepEqual(avoidAreasOf({ avoidAreas: ["knees", "elbows"] }), ["knees"]);
+  assert.deepEqual(avoidAreasOf({}), []);
+});
+
+test("the coach is told what an older plan has that go easy on now rules out, and a swap it made is spelled out", () => {
+  const days = [{ day: "tuesday", exercises: [{ exerciseId: "squat" }, { exerciseId: "leg_curl" }] }];
+  assert.deepEqual(ruledOutIn(days, ["knees"]), ["Barbell Back Squat (knees)"]);
+  assert.deepEqual(ruledOutIn(days, []), []);
+
+  const ai = [{ d: "tuesday", x: [{ id: "squat" }, { id: "lunge" }, { id: "leg_curl" }] }];
+  const checked = [{ day: "tuesday", exercises: [{ exerciseId: "leg_press" }, { exerciseId: "goblet_squat" }, { exerciseId: "leg_curl" }] }];
+  assert.equal(goEasySwapNote(ai, checked, ["knees"]), "To go easy on your knees, this uses Leg Press instead of Barbell Back Squat and Goblet Squat instead of Walking Lunges.");
+  assert.equal(goEasySwapNote([{ d: "tuesday", x: [{ id: "leg_curl" }] }], checked, ["knees"]), null, "nothing swapped");
+  assert.equal(goEasySwapNote(ai, checked, []), null);
 });

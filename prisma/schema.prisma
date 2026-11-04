@@ -31,9 +31,17 @@ model User {
   trainingDays    Int[]   @default([]) @map("training_days")
   /// Areas to go easy on: knees | lower_back | shoulders | wrists
   avoidAreas      String[] @default([]) @map("avoid_areas")
+  /// "Go easy on → Other": the user's own words (≤ 200 characters, cleaned), e.g. "old ankle sprain".
+  /// Goes to the AI only as data, never as instructions.
+  avoidNote       String? @map("avoid_note")
   /// The AI coach's health check (utils/healthCheck.js): { version, answers: { heart: false, … },
   /// checkedAt, consentedAt }. Yes/no answers only; any "yes" turns on Safe mode. Null until done.
   healthCheck     Json?   @map("health_check")
+  /// The app's settings for this account (utils/preferences.js): { theme, unit, defaultReps, barWeights }.
+  /// Applied on sign-in, so they follow the account to any phone. Null until first saved.
+  preferences     Json?
+  /// When the "Welcome to Iron Arc" email went out (services/welcomeService.js), so it goes once.
+  welcomedAt      DateTime? @map("welcomed_at")
   isAdmin       Boolean  @default(false) @map("is_admin")
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at")
@@ -48,8 +56,75 @@ model User {
   aiUsage         AiUsage[]
   aiReports       AiReport[]
   aiFeedback      AiFeedback[]
+  subscription    Subscription?
+  payments        Payment[]
 
   @@map("users")
+}
+
+/// Iron Arc Pro (utils/billing.js): one row per user who ever subscribed, kept after it
+/// ends so the free trial is given only once. Pro while current_period_end is in the future.
+model Subscription {
+  id               String    @id @default(uuid())
+  userId           String    @unique @map("user_id")
+  /// monthly | yearly
+  plan             String
+  /// The plan from the next renewal on ("Change plan"), or null.
+  nextPlan         String?   @map("next_plan")
+  /// False once cancelled: Pro stays until current_period_end, then ends.
+  autoRenew        Boolean   @default(true) @map("auto_renew")
+  currentPeriodEnd DateTime  @map("current_period_end")
+  /// Set the first time the trial starts and never cleared: one trial per account.
+  trialStartedAt   DateTime? @map("trial_started_at")
+  /// The end of the trial this subscription began with, or null.
+  trialEndsAt      DateTime? @map("trial_ends_at")
+  /// When the "trial ends soon" email went out (services/billingService.js), so it goes once.
+  trialReminderSentAt DateTime? @map("trial_reminder_sent_at")
+  startedAt        DateTime  @map("started_at")
+  cancelledAt      DateTime? @map("cancelled_at")
+  /// Who takes the payments: test (nothing is charged), later google_play.
+  provider         String    @default("test")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+/// Who has had the free trial, kept after their account is deleted so a new account with the
+/// same email doesn't get a second one. Only a keyed one-way hash of the email (utils/trialClaims.js).
+model TrialClaim {
+  emailHash String   @id @map("email_hash")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("trial_claims")
+}
+
+/// Receipts: a trial start (amount 0), a purchase or a renewal.
+model Payment {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  /// trial | purchase | renewal
+  kind        String
+  /// monthly | yearly
+  plan        String
+  /// In the currency's smallest unit: ₹149 is 14900 paise.
+  amount      Int
+  currency    String   @default("INR")
+  /// test (nothing is charged), later google_play.
+  provider    String   @default("test")
+  /// One per charge, so a retried checkout or renewal is never charged twice.
+  reference   String   @unique
+  /// The period it pays for.
+  periodStart DateTime @map("period_start")
+  periodEnd   DateTime @map("period_end")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("payments")
 }
 
 /// AI calls and tokens per user per UTC day: what the daily budgets check (services/aiBudget.js).

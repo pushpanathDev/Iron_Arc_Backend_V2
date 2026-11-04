@@ -1,4 +1,5 @@
 const { safeModeOf } = require("./healthCheck");
+const { promptText } = require("./aiText");
 
 /**
  * The only profile fields the AI may see: training facts, never anything that
@@ -18,6 +19,8 @@ function anonymizeIronArcProfile(userProfile) {
     sessionMinutes: userProfile.sessionMinutes ?? null,
     trainingDays: Array.isArray(userProfile.trainingDays) ? userProfile.trainingDays : [],
     avoidAreas: Array.isArray(userProfile.avoidAreas) ? userProfile.avoidAreas : [],
+    // The user's own words: cleaned, and only ever placed inside <app_data>.
+    avoidNote: userProfile.avoidNote ? promptText(userProfile.avoidNote, 200) : null,
     safeMode: safeModeOf(userProfile),
   };
 }

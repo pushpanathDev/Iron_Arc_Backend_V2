@@ -1,4 +1,4 @@
-const { EXERCISE_DB, isValidExerciseId, equipmentTagsFor, findSimilarExercise, exerciseOrderTier } = require("./exerciseDatabase");
+const { EXERCISE_DB, isValidExerciseId, isAllowedExercise, equipmentTagsFor, findSimilarExercise, exerciseOrderTier } = require("./exerciseDatabase");
 const { aiText } = require("./aiText");
 const { WEEKDAYS } = require("./planChat");
 
@@ -9,7 +9,8 @@ const { WEEKDAYS } = require("./planChat");
  *
  * Edge Cases:
  * - Malformed structure → throws INVALID_PLAN_STRUCTURE (caller handles retry)
- * - Made-up exercise IDs → replaced with a known exercise for the same day's
+ * - Made-up exercise IDs, and ones the user's equipment or "go easy on" rules
+ *   out → replaced with the closest allowed exercise for the same day's
  *   muscles and the user's equipment
  * - Every exercise gets its one fixed name from the exercise database, and a
  *   progression note that fits its reps when it has none
@@ -72,7 +73,13 @@ function progressionNoteFor(exerciseId, reps) {
   return weighted ? `Add 2.5 kg once every set reaches ${top} reps` : `Add 2 reps or slow the lowering once every set reaches ${top} reps`;
 }
 
-function validateAndSanitizePlan(rawPlan, equipmentTags = equipmentTagsFor(null)) {
+/**
+ * `equipmentTags`: what the user can use; `avoid`: areas to go easy on. An
+ * exercise outside them (or unknown) is replaced by the closest one inside.
+ * `fromWeek`: weeks before it are past, so "go easy on" leaves them as they
+ * were (they match what was logged); equipment and limits still apply.
+ */
+function validateAndSanitizePlan(rawPlan, equipmentTags = equipmentTagsFor(null), { avoid = [], fromWeek = 1 } = {}) {
   if (!rawPlan || !rawPlan.weeks || !Array.isArray(rawPlan.weeks)) {
     throw new Error("INVALID_PLAN_STRUCTURE");
   }
@@ -84,55 +91,61 @@ function validateAndSanitizePlan(rawPlan, equipmentTags = equipmentTagsFor(null)
   return {
     ...rawPlan,
     planExplanation: aiText(rawPlan.planExplanation, 400) || "AI-generated fitness plan.",
-    weeks: rawPlan.weeks.map((week, weekIdx) => ({
-      week: week.week || weekIdx + 1,
-      isDeloadWeek: week.isDeloadWeek || false,
-      days: (week.days || []).map((day) => {
-        // Rest days pass through, with their note cleaned
-        if (day.sessionType === "rest") {
+    weeks: rawPlan.weeks.map((week, weekIdx) => {
+      const weekAvoid = (week.week || weekIdx + 1) < fromWeek ? [] : avoid;
+      return {
+        week: week.week || weekIdx + 1,
+        isDeloadWeek: week.isDeloadWeek || false,
+        days: (week.days || []).map((day) => {
+          // Rest days pass through, with their note cleaned
+          if (day.sessionType === "rest") {
+            return {
+              day: day.day || "rest",
+              sessionType: "rest",
+              recoveryNote: aiText(day.recoveryNote, 160) || "Rest and recover.",
+            };
+          }
+
+          // Training days get validated
+          const targetMuscles = (Array.isArray(day.targetMuscles) ? day.targetMuscles : []).filter((m) => KNOWN_MUSCLES.has(m));
+          // Taken in this day: the AI's own picks and each stand-in chosen so far, so none repeats.
+          const taken = (day.exercises || []).map((ex) => ex.exerciseId);
           return {
-            day: day.day || "rest",
-            sessionType: "rest",
-            recoveryNote: aiText(day.recoveryNote, 160) || "Rest and recover.",
+            day: day.day || "training",
+            sessionType: day.sessionType || "training",
+            targetMuscles,
+            estimatedDurationMinutes: boundedInt(day.estimatedDurationMinutes, LIMITS.minutes, 45),
+            exercises: (day.exercises || [])
+              .slice(0, LIMITS.exercisesPerDay)
+              .map((ex) => {
+                const allowed = isAllowedExercise(ex.exerciseId, equipmentTags, weekAvoid);
+                const muscles = isValidExerciseId(ex.exerciseId) ? EXERCISE_DB[ex.exerciseId].muscles : targetMuscles;
+                const exerciseId = allowed ? ex.exerciseId : findSimilarExercise(muscles, equipmentTags, taken, { avoid: weekAvoid, order: isValidExerciseId(ex.exerciseId) ? EXERCISE_DB[ex.exerciseId].order : undefined });
+                if (!allowed) taken.push(exerciseId);
+
+                const reps = normalizeReps(ex.reps ?? "8-12");
+                const weight = Number(ex.targetWeight_kg);
+                return {
+                  exerciseId,
+                  name: EXERCISE_DB[exerciseId].name,
+                  sets: boundedInt(ex.sets, LIMITS.sets, 3),
+                  reps,
+                  restSeconds: boundedInt(ex.restSeconds, LIMITS.restSeconds, 60),
+                  targetWeight_kg: ex.targetWeight_kg != null && Number.isFinite(weight) && weight >= 0 && weight <= 500 ? weight : null,
+                  progressionNote: aiText(ex.progressionNote, 140) || progressionNoteFor(exerciseId, reps),
+                  substitutes: Array.isArray(ex.substitutes) ? ex.substitutes.filter((s) => isValidExerciseId(s)) : [],
+                  // Keep the swap trail ("Swapped from …") through later edits.
+                  ...(ex.substitutedFrom ? { substitutedFrom: String(ex.substitutedFrom).slice(0, 80) } : {}),
+                  ...(ex.substitutionReason ? { substitutionReason: aiText(ex.substitutionReason, 160) } : {}),
+                };
+              })
+              .map((ex, i) => ({ ex, i }))
+              .sort((a, b) => exerciseOrderTier(a.ex.exerciseId) - exerciseOrderTier(b.ex.exerciseId) || a.i - b.i)
+              .map(({ ex }) => ex),
           };
-        }
-
-        // Training days get validated
-        const targetMuscles = (Array.isArray(day.targetMuscles) ? day.targetMuscles : []).filter((m) => KNOWN_MUSCLES.has(m));
-        const dayIds = (day.exercises || []).map((ex) => ex.exerciseId);
-        return {
-          day: day.day || "training",
-          sessionType: day.sessionType || "training",
-          targetMuscles,
-          estimatedDurationMinutes: boundedInt(day.estimatedDurationMinutes, LIMITS.minutes, 45),
-          exercises: (day.exercises || [])
-            .slice(0, LIMITS.exercisesPerDay)
-            .map((ex) => {
-              const known = isValidExerciseId(ex.exerciseId);
-              const exerciseId = known ? ex.exerciseId : findSimilarExercise(targetMuscles, equipmentTags, dayIds);
-
-              const reps = normalizeReps(ex.reps ?? "8-12");
-              const weight = Number(ex.targetWeight_kg);
-              return {
-                exerciseId,
-                name: EXERCISE_DB[exerciseId].name,
-                sets: boundedInt(ex.sets, LIMITS.sets, 3),
-                reps,
-                restSeconds: boundedInt(ex.restSeconds, LIMITS.restSeconds, 60),
-                targetWeight_kg: ex.targetWeight_kg != null && Number.isFinite(weight) && weight >= 0 && weight <= 500 ? weight : null,
-                progressionNote: aiText(ex.progressionNote, 140) || progressionNoteFor(exerciseId, reps),
-                substitutes: Array.isArray(ex.substitutes) ? ex.substitutes.filter((s) => isValidExerciseId(s)) : [],
-                // Keep the swap trail ("Swapped from …") through later edits.
-                ...(ex.substitutedFrom ? { substitutedFrom: String(ex.substitutedFrom).slice(0, 80) } : {}),
-                ...(ex.substitutionReason ? { substitutionReason: aiText(ex.substitutionReason, 160) } : {}),
-              };
-            })
-            .map((ex, i) => ({ ex, i }))
-            .sort((a, b) => exerciseOrderTier(a.ex.exerciseId) - exerciseOrderTier(b.ex.exerciseId) || a.i - b.i)
-            .map(({ ex }) => ex),
-        };
-      }),
-    })),
+        }),
+      };
+    }),
   };
 }
 
@@ -199,4 +212,4 @@ function saferFrom(plan, weekNumber = 1) {
   return { ...plan, weeks: plan.weeks.map((week, i) => (i + 1 >= weekNumber ? { ...week, days: saferDays(week.days) } : week)) };
 }
 
-module.exports = { validateAndSanitizePlan, progressionNoteFor, normalizeReps, weekProblems, saferReps, saferDays, saferFrom, weeklySets, LIMITS, SAFE_LIMITS };
+module.exports = { validateAndSanitizePlan, normalizeReps, weekProblems, saferReps, saferDays, saferFrom, weeklySets, SAFE_LIMITS };

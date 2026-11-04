@@ -3,6 +3,7 @@ const { verifyAdminKey } = require("../middleware/adminMiddleware");
 const { listUsers, disableUser } = require("../services/adminService");
 const { deleteUserEverywhere } = require("../services/userService");
 const { listReports, markReviewed, feedbackSummary } = require("../services/aiReportService");
+const { resetSubscription, sendTrialReminders } = require("../services/billingService");
 
 // Server-to-server only: every route needs the x-admin-key header.
 // :uid is the user's Firebase UID.
@@ -47,6 +48,16 @@ router.post("/ai-reports/:id/reviewed", async (req, res) => {
 router.get("/ai-feedback", async (req, res) => {
   const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 365);
   res.json({ success: true, data: await feedbackSummary(days) });
+});
+
+// Testing Iron Arc Pro: removes the user's subscription and receipts, so they can try the free trial again.
+router.post("/user/:uid/subscription/reset", async (req, res) => {
+  res.json({ success: true, message: "Subscription reset.", data: await resetSubscription(req.params.uid) });
+});
+
+// The daily job (.github/workflows/daily-jobs.yml): "your trial ends soon" emails, each sent once.
+router.post("/jobs/trial-reminders", async (req, res) => {
+  res.json({ success: true, data: await sendTrialReminders() });
 });
 
 module.exports = router;

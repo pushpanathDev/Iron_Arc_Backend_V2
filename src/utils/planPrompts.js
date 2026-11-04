@@ -75,14 +75,29 @@ const INTENSITY_NOTES = {
   aggressive: "Start at 75-80% estimated 1RM. Push to near failure on final set. Increase load as soon as all sets are clean.",
 };
 
+/**
+ * What the user goes easy on, for a prompt: the areas (with their rules when
+ * `rules`) and their own note in quotes, or null for nothing. The note is the
+ * user's words: it's data inside <app_data>, never an instruction.
+ */
+function goEasyOn(profile, { rules = false } = {}) {
+  const areas = Array.isArray(profile.avoidAreas) ? profile.avoidAreas.filter((a) => AVOID_LABELS[a]) : [];
+  const parts = [];
+  if (areas.length > 0) parts.push(`${areas.map((a) => AVOID_LABELS[a]).join(", ")}.${rules ? ` ${areas.map((a) => AVOID_RULES[a]).join(" ")}` : ""}`);
+  if (profile.avoidNote) parts.push(`In the user's words: "${profile.avoidNote}" (choose gentler options for it; it's not a medical instruction).`);
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
 /** "Goal: build muscle · Experience: beginner · Equipment: dumbbells", from the anonymized profile. */
 function profileSummary(profile, { age = false, session = false } = {}) {
+  const easy = goEasyOn(profile);
   return [
     `Goal: ${goalOf(profile)}`,
     age && profile.age && `Age: ${profile.age}`,
     profile.experienceLevel && `Experience: ${profile.experienceLevel}`,
     profile.equipment && `Equipment: ${String(profile.equipment).replace(/_/g, " ")}`,
     session && profile.sessionMinutes && `Session: ${profile.sessionMinutes} min`,
+    easy && `Go easy on: ${easy}`,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -96,7 +111,7 @@ function profileSummary(profile, { age = false, session = false } = {}) {
 function buildFirstWeekPrompt(profile, settings, recent = []) {
   const { minutes, equipment, experience, split, progression, intensity, priorityMuscles, schedule, totalWeeks } = settings;
   const avoidAreas = Array.isArray(profile.avoidAreas) ? profile.avoidAreas.filter((a) => AVOID_LABELS[a]) : [];
-  const avoid = avoidAreas.length > 0 ? `${avoidAreas.map((a) => AVOID_LABELS[a]).join(", ")}. ${avoidAreas.map((a) => AVOID_RULES[a]).join(" ")}` : "nothing";
+  const avoid = goEasyOn(profile, { rules: true }) ?? "nothing";
   const maxExercises = minutes <= 30 ? 4 : minutes <= 45 ? 5 : minutes <= 60 ? 7 : 8;
   const restBetweenSets = minutes <= 45 ? "45-60s" : "60-120s";
   const week = schedule.map((s) => `- ${WEEKDAY_NAMES[WEEKDAYS.indexOf(s.day)]}: ${s.session} (${s.muscles.join(", ")})`).join("\n");
@@ -112,7 +127,7 @@ RULES
 3. Experience: beginner 2-3 sets, compound movements first, avoid failure; intermediate 3-4 sets, compound + isolation, 1-2 reps in reserve; advanced 4-5 sets, drop sets and supersets allowed, closer to failure.
 4. Rep ranges by goal: strength 3-5 reps, 3-5 min rest; muscle 6-12 reps, 60-90s rest; endurance 15-20 reps, 30-45s rest; weight-loss 10-15 reps, 45-60s rest; general fitness 8-12 reps, 60s rest.
 5. ${ORDER_RULE}
-6. Exercise ids only from: ${allowedExerciseIds(equipmentTagsFor(equipment)).join(", ")}.
+6. Exercise ids only from: ${allowedExerciseIds(equipmentTagsFor(equipment), avoidAreas).join(", ")}.
 7. "progressionNote": one short line on how to progress that exercise next week.
 8. "planExplanation": 2 sentences on why this split and progression suit the user.
 
@@ -201,7 +216,8 @@ RULES
 Return ONLY this JSON:
 {"substituteExerciseId": "exercise_id", "substituteName": "Exercise Name", "reason": "Why this is the best substitute"}`;
 
-  const user = `${fenced("app_data", `Exercise to replace: ${promptText(exerciseId, 100)}\nUser goal: ${goalOf(anonymizedProfile)}`)}
+  const easy = goEasyOn(anonymizedProfile);
+  const user = `${fenced("app_data", `Exercise to replace: ${promptText(exerciseId, 100)}\nUser goal: ${goalOf(anonymizedProfile)}${easy ? `\nGo easy on: ${easy}` : ""}`)}
 ${fenced("user_reason", reason ? promptText(reason, 200) : "not given")}`;
   return { system, user };
 }
@@ -238,7 +254,7 @@ RULES
 - If nothing is logged in THIS WEEK yet (it may have only just started), a question about "my week" is about LAST WEEK, or the log when there's no last week. Say which week you mean.
 - Never train the same muscle group on consecutive days. Keep sessions within the minutes given.
 - ${ORDER_RULE}
-- Exercise ids only from: ${meta.exerciseIds.join(", ")}.
+- Exercise ids only from: ${meta.exerciseIds.join(", ")}. When PROFILE has "Go easy on", those areas are why some exercises aren't in this list: if the user asks for one, say in the message that you picked a gentler option for that area (name it), and use one from the list.
 - "message": 1–3 friendly sentences, like a real coach. With a change, nothing has changed yet: the user decides. Write it as a suggestion ("I suggest…", "Here's what I'd change…", "Tap Apply to use it") and say why; never "I've changed", "I've swapped" or "Done". Otherwise answer.
 
 Return ONLY this JSON:
@@ -256,7 +272,7 @@ THIS WEEK (week ${meta.thisWeek?.number ?? meta.weekNumber ?? 1}${meta.thisWeek?
 ${meta.thisWeek?.lines?.length > 0 ? meta.thisWeek.lines.join("\n") : "No training days this week."}${meta.thisWeek?.over ? "\nThis week is over; the user hasn't started the next one yet." : ""}
 ${meta.lastWeek ? `\nLAST WEEK (week ${meta.lastWeek.number}, ${meta.lastWeek.range}):\n${meta.lastWeek.lines.length > 0 ? meta.lastWeek.lines.join("\n") : "No training days."}\n` : ""}
 LOGGED IN THE LAST 7 DAYS (date, exercise: weight kg × reps per set):
-${meta.logged?.length > 0 ? meta.logged.join("\n") : "Nothing logged."}`;
+${meta.logged?.length > 0 ? meta.logged.join("\n") : "Nothing logged."}${meta.ruledOut?.length > 0 ? `\n\nRULED OUT BY GO EASY ON (in this week from before; any change you suggest replaces them with gentler options from the list, and says why): ${meta.ruledOut.join(", ")}` : ""}`;
 
   const turns = history.slice(-6).map((m) =>
     m.role === "user"

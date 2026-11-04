@@ -16,7 +16,9 @@ const signedIn = (req, res, next) => {
 };
 stub("middleware/authMiddleware.js", {
   verifyFirebaseToken: signedIn,
+  verifyFirebaseTokenWithRevocation: signedIn,
   requireEmailVerified: (req, res, next) => next(),
+  requireRecentSignIn: (req, res, next) => next(),
 });
 
 let aiCalls = 0;
@@ -40,11 +42,23 @@ stub("config/database.js", {
     workout: { findMany: async () => [] },
     // Daily AI budgets: nothing used yet.
     aiUsage: { findUnique: async () => null, aggregate: async () => ({ _sum: {} }), upsert: async () => ({}) },
+    // Iron Arc Pro: free (no subscription) with the free plan unused, unless a test changes it.
+    subscription: { findUnique: async () => subscription },
+    trialClaim: { findUnique: async () => null },
+    planGeneration: { findMany: async () => plansMade.map((createdAt) => ({ createdAt })) },
   },
 });
+let subscription = null;
+let plansMade = [];
+const proYearly = { id: "sub-1", userId: "user-1", plan: "yearly", nextPlan: null, autoRenew: true, currentPeriodEnd: new Date(Date.now() + 86_400_000), trialStartedAt: null, trialEndsAt: null, provider: "test" };
 stub("config/firebase.js", { auth: {} });
+let profileSaves = [];
 stub("services/userService.js", {
   deleteUserEverywhere: async () => ({ postgresDeleted: true, authDeleted: true, errors: [] }),
+  updateProfile: async (id, data) => {
+    profileSaves.push(data);
+    return { ...dbUser, ...data };
+  },
 });
 
 process.env.ADMIN_SECRET_KEY = "test-key";
@@ -52,6 +66,7 @@ const app = express();
 app.use(express.json({ limit: "50kb" }));
 app.use("/api/plans", require("./planRoutes"));
 app.use("/api/admin", require("./adminRoutes"));
+app.use("/api/user", require("./userRoutes"));
 app.use(require("../middleware/errorHandler").errorHandler);
 
 let server;
@@ -103,6 +118,7 @@ test("swapping an exercise that isn't in the plan answers 422 without calling th
 
 test("the AI routes need the health check first: a 403 with a code the app acts on, and no AI call", async () => {
   aiCalls = 0;
+  subscription = proYearly;
   try {
     dbUser = { ...cleared, healthCheck: null };
     for (const [url, body] of [["/api/plans/generate", { criteria: {} }], ["/api/plans/plan-1/chat", { message: "hi" }], ["/api/plans/plan-1/substitute", { exerciseId: "squat" }], ["/api/plans/plan-1/recalibrate", {}]]) {
@@ -115,6 +131,7 @@ test("the AI routes need the health check first: a 403 with a code the app acts 
     assert.equal(aiCalls, 0);
   } finally {
     dbUser = cleared;
+    subscription = null;
   }
 });
 
@@ -137,4 +154,70 @@ test("reporting a coach reply works without the health check (it must always be 
   } finally {
     dbUser = cleared;
   }
+});
+
+test("the coach chat is Pro: a free user gets 403 PRO_REQUIRED (before the health check) and no AI call", async () => {
+  aiCalls = 0;
+  try {
+    for (const user of [cleared, { ...cleared, healthCheck: null }]) {
+      dbUser = user;
+      const res = await call("POST", "/api/plans/plan-1/chat", { message: "hi" });
+      assert.equal(res.status, 403);
+      assert.equal((await res.json()).code, "PRO_REQUIRED");
+    }
+    assert.equal(aiCalls, 0);
+  } finally {
+    dbUser = cleared;
+  }
+});
+
+test("a free user's second plan in 30 days is 403 PLAN_LIMIT_REACHED; Pro has no limit", { timeout: 15_000 }, async () => {
+  aiCalls = 0;
+  try {
+    plansMade = [new Date(Date.now() - 5 * 86_400_000)];
+    const limited = await call("POST", "/api/plans/generate", { criteria: {} });
+    assert.equal(limited.status, 403);
+    assert.equal((await limited.json()).code, "PLAN_LIMIT_REACHED");
+    assert.equal(aiCalls, 0);
+
+    subscription = proYearly;
+    assert.equal((await call("POST", "/api/plans/generate", { criteria: {} })).status, 503, "past the gate: the AI (down here) is called");
+  } finally {
+    plansMade = [];
+    subscription = null;
+  }
+});
+
+test("next week and swaps stay free: a used free plan doesn't block them", async () => {
+  try {
+    plansMade = [new Date()];
+    assert.equal((await call("POST", "/api/plans/plan-1/substitute", { exerciseId: "bench_press" })).status, 422, "reached the swap itself");
+  } finally {
+    plansMade = [];
+  }
+});
+
+test("PRO_GATE=off opens every AI feature (for deploying before the app has the Pro screen)", { timeout: 15_000 }, async () => {
+  process.env.PRO_GATE = "off";
+  try {
+    plansMade = [new Date()];
+    assert.equal((await call("POST", "/api/plans/generate", { criteria: {} })).status, 503);
+  } finally {
+    delete process.env.PRO_GATE;
+    plansMade = [];
+  }
+});
+
+test("'Go easy on → Other' with a danger sign gets the safety reply and isn't saved; an ordinary note is", async () => {
+  profileSaves = [];
+  const refused = await call("PATCH", "/api/user/profile", { avoidNote: "chest pain when I lift" });
+  assert.equal(refused.status, 422);
+  const body = await refused.json();
+  assert.equal(body.code, "SAFETY_STOP");
+  assert.match(body.message, /stop/i);
+  assert.equal(profileSaves.length, 0);
+
+  const ok = await call("PATCH", "/api/user/profile", { avoidNote: "old ankle sprain" });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(profileSaves, [{ avoidNote: "old ankle sprain" }]);
 });

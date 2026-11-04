@@ -637,3 +637,37 @@ test("a reply that quotes the coach's instructions is never shown, and changes n
   assert.equal(result.message, LEAK_REPLY);
   assert.equal(result.proposal, null);
 });
+
+test("a danger sign in a swap reason gets the safety reply: no AI, no swap, kept in the chat", async () => {
+  aiReply = { planExplanation: "x", days: ["monday", "tuesday", "wednesday"].map((day) => ({ day, exercises: [{ exerciseId: "squat", sets: 3, reps: "8-12", restSeconds: 90 }] })) };
+  await generatePlan(user, { splitPreference: "push_pull_legs" });
+  const { substituteExercise } = require("./planningService");
+  const before = JSON.stringify(storedPlan.planData.weeks);
+  const asked = prompts.length;
+  await assert.rejects(substituteExercise(user, "plan-1", "squat", "felt a pop in my knee and it's swelling"), (e) => e.status === 422 && e.code === "SAFETY_STOP" && /Stop training that area/.test(e.message));
+  assert.equal(prompts.length, asked, "no AI call");
+  assert.equal(JSON.stringify(storedPlan.planData.weeks), before, "nothing swapped");
+  const [asking, reply] = storedPlan.planData._chatHistory.slice(-2);
+  assert.match(asking.content, /swelling/);
+  assert.deepEqual([reply.role, reply.kind], ["assistant", "safety"]);
+});
+
+test("Safe mode on a plan made before it: bounded from this week on, noted in the chat, once", async () => {
+  aiReply = { planExplanation: "x", days: ["monday", "tuesday", "wednesday"].map((day) => ({ day, exercises: [{ exerciseId: "squat", sets: 6, reps: "3-5", restSeconds: 45 }] })) };
+  await generatePlan(user, { splitPreference: "push_pull_legs" });
+  const { makePlanSafer } = require("./planningService");
+
+  await assert.rejects(makePlanSafer(user, "plan-1"), (e) => e.status === 409 && e.code === "SAFE_MODE_OFF");
+
+  const result = await makePlanSafer(safeUser, "plan-1");
+  assert.equal(result.changed, true);
+  for (const ex of storedPlan.planData.weeks[0].days.flatMap((d) => d.exercises ?? [])) {
+    assert.ok(ex.sets <= 4 && ex.restSeconds >= 60 && ex.reps === "8-12", JSON.stringify(ex));
+  }
+  const note = storedPlan.planData._chatHistory.at(-1);
+  assert.equal(note.kind, "safeMode");
+  assert.ok(note.changes.length > 0);
+
+  const again = await makePlanSafer(safeUser, "plan-1");
+  assert.equal(again.changed, false, "already within Safe mode");
+});

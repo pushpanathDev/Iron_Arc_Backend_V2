@@ -1,6 +1,8 @@
 const { auth } = require("../config/firebase");
 const { prisma } = require("../config/database");
-const { newHealthCheck } = require("../utils/healthCheck");
+const { newHealthCheck, healthCheckOf, anyYesOf } = require("../utils/healthCheck");
+const { HttpError } = require("../utils/httpError");
+const { rememberTrial } = require("./billingService");
 
 function normalizeEmail(email) {
   return (email || "").trim().toLowerCase();
@@ -84,6 +86,7 @@ const EDITABLE_FIELDS = [
   "sessionMinutes",
   "trainingDays",
   "avoidAreas",
+  "avoidNote",
 ];
 
 async function updateProfile(userId, data) {
@@ -107,6 +110,13 @@ async function updateProfile(userId, data) {
  */
 async function deleteUserEverywhere(firebaseUid) {
   const result = { postgresDeleted: false, authDeleted: false, errors: [] };
+
+  // One free trial per person: noted (as a fingerprint) before the account goes. Never blocks the deletion.
+  try {
+    await rememberTrial(firebaseUid);
+  } catch (error) {
+    console.warn(`[userService] Could not note the trial of ${firebaseUid}: ${error.message}`);
+  }
 
   try {
     await prisma.user.delete({ where: { firebaseUid } });
@@ -140,6 +150,33 @@ async function deleteAccount(firebaseUid) {
   if (errors.length > 0) throw new Error(`Account deletion incomplete: ${errors.join("; ")}`);
 }
 
+/**
+ * Saves some of the app's settings for this account (validated by
+ * preferencesSchema); the ones not sent stay as they were.
+ */
+async function savePreferences(userId, changes) {
+  // One statement (not read, merge, write), so two saves at the same moment both land.
+  await prisma.$executeRaw`
+    UPDATE "users"
+    SET "preferences" = (CASE WHEN jsonb_typeof("preferences") = 'object' THEN "preferences" ELSE '{}'::jsonb END) || ${JSON.stringify(changes)}::jsonb,
+        "updated_at" = NOW()
+    WHERE "id" = ${userId}`;
+  return prisma.user.findUnique({ where: { id: userId } });
+}
+
+/**
+ * The user confirms a doctor has cleared them to exercise without
+ * restrictions (`cleared`), or takes that back: Safe mode follows. Only with
+ * a current check that has a "yes"; the answers are kept as they were.
+ */
+async function setHealthClearance(user, cleared, now = new Date()) {
+  const check = healthCheckOf(user);
+  if (!check || !anyYesOf(user)) throw new HttpError(409, "Safe mode isn't on, so there's nothing to clear.", "NO_SAFE_MODE");
+  const { clearedAt, ...rest } = check;
+  const healthCheck = cleared ? { ...rest, clearedAt: clearedAt ?? now.toISOString() } : rest;
+  return prisma.user.update({ where: { id: user.id }, data: { healthCheck } });
+}
+
 /** Saves the coach's health check (yes/no answers only) with the time the user agreed to the AI terms. */
 function saveHealthCheck(userId, answers) {
   return prisma.user.update({ where: { id: userId }, data: { healthCheck: newHealthCheck(answers) } });
@@ -149,6 +186,8 @@ module.exports = {
   upsertUserByFirebaseUid,
   updateProfile,
   saveHealthCheck,
+  setHealthClearance,
   deleteUserEverywhere,
   deleteAccount,
+  savePreferences,
 };

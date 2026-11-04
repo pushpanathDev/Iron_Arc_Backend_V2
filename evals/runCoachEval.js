@@ -99,6 +99,7 @@ const userFor = (c) => ({
   sessionMinutes: 60,
   trainingDays: [1, 2, 4, 5],
   weeklyGoal: 4,
+  avoidAreas: c.avoid ?? [],
   healthCheck: newHealthCheck(c.safeMode ? { ...allNo, joints: true } : allNo),
 });
 
