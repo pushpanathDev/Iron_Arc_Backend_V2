@@ -68,6 +68,65 @@ test("GitHub is asked at most every 10 minutes, and when it fails the last answe
   assert.equal(calls, 3);
 });
 
+test("GITHUB_TOKEN is sent to GitHub when set", async () => {
+  const tokens = [];
+  const fetchRelease = async (repo, { token }) => {
+    tokens.push(token);
+    return gh();
+  };
+  await latestRelease({ GITHUB_TOKEN: " abc " }, { fetchRelease, now: NOW });
+  clearReleaseCache();
+  await latestRelease({ GITHUB_TOKEN: "" }, { fetchRelease, now: NOW });
+  assert.deepEqual(tokens, ["abc", undefined]);
+});
+
+test("a refusing GitHub is asked again when its limit resets, at most an hour later", async () => {
+  let calls = 0;
+  let retryAt = NOW + 30 * 60 * 1000;
+  const fetchRelease = async () => {
+    calls += 1;
+    throw Object.assign(new Error("GitHub answered 403"), { retryAt });
+  };
+  const at = (minutes) => latestRelease({}, { fetchRelease, now: NOW + minutes * 60 * 1000 });
+  assert.equal(await at(0), null);
+  await at(29);
+  assert.equal(calls, 1, "waits for the reset");
+  retryAt = NOW + 600 * 60 * 1000;
+  await at(30);
+  assert.equal(calls, 2);
+  await at(89);
+  assert.equal(calls, 2);
+  await at(90);
+  assert.equal(calls, 3, "never waits more than an hour");
+});
+
+test("GitHub is asked with the token, and its rate-limit reset is read", async () => {
+  const realFetch = globalThis.fetch;
+  const seen = [];
+  const reset = Math.floor(Date.now() / 1000) + 20 * 60;
+  globalThis.fetch = async (url, { headers }) => {
+    seen.push(headers.Authorization);
+    return new Response("{}", { status: 403, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) } });
+  };
+  const warn = console.warn;
+  const warnings = [];
+  console.warn = (message) => warnings.push(message);
+  try {
+    assert.equal(await latestRelease({ GITHUB_TOKEN: "abc" }), null);
+    assert.equal(seen[0], "Bearer abc");
+    await latestRelease({ GITHUB_TOKEN: "abc" });
+    assert.equal(seen.length, 1, "not asked again before the reset");
+    clearReleaseCache();
+    await latestRelease({});
+    assert.equal(seen[1], undefined, "no token, no header");
+    assert.match(warnings[1], /403 \(set GITHUB_TOKEN/);
+    assert.doesNotMatch(warnings[0], /set GITHUB_TOKEN/);
+  } finally {
+    globalThis.fetch = realFetch;
+    console.warn = warn;
+  }
+});
+
 test("manual control with the APP_* settings takes over from GitHub", async () => {
   const fetchRelease = async () => assert.fail("GitHub isn't asked");
   const release = await latestRelease(

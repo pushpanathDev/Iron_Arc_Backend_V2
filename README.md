@@ -191,6 +191,8 @@ release there is the whole update, with nothing to change here:
 Older apps are offered it, then must update 3 days after it was published
 (`APP_UPDATE_GRACE_DAYS`); `APP_MIN_VERSION` makes anything older update at
 once. Setting `APP_LATEST_VERSION` switches to manual control (see `.env.example`).
+Render needs `GITHUB_TOKEN` (read-only, public repositories): without it GitHub's
+60-an-hour limit for Render's shared address runs out and it answers 403.
 
 ## Database
 
