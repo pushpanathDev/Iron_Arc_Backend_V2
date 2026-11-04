@@ -50,7 +50,7 @@ stub("config/database.js", {
 });
 stub("services/achievementService.js", { evaluateAchievementsSafely: async () => [] });
 
-const { chatWithPlan } = require("../src/services/planningService");
+const { chatWithPlan } = require("../src/services/plans");
 const { validateAndSanitizePlan } = require("../src/utils/planValidator");
 const { newHealthCheck, HEALTH_CHECK_QUESTIONS } = require("../src/utils/healthCheck");
 const CASES = require("./coachCases");

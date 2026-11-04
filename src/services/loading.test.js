@@ -32,7 +32,7 @@ stub("config/database.js", {
 });
 stub("config/groq.js", { groqClient: {}, GROQ_MODEL: "test" });
 
-const planningService = require("./planningService");
+const planService = require("./plans");
 const { getAchievements } = require("./achievementService");
 
 beforeEach(() => {
@@ -40,18 +40,18 @@ beforeEach(() => {
 });
 
 test("the plan list never reads the plans themselves", async () => {
-  await planningService.listPlans("user-1");
+  await planService.listPlans("user-1");
   assert.deepEqual(queries[0].args.omit, { planData: true });
 });
 
 test("renaming only checks ownership, without loading the plan", async () => {
-  await planningService.renamePlan("user-1", "plan-1", "Strength");
+  await planService.renamePlan("user-1", "plan-1", "Strength");
   const check = queries.find((q) => q.name === "plan.findFirst");
   assert.deepEqual(check.args.select, { id: true, isActive: true });
 });
 
 test("someone else's plan is still a 404", async () => {
-  await assert.rejects(planningService.renamePlan("user-2", "plan-1", "Mine now"), { status: 404 });
+  await assert.rejects(planService.renamePlan("user-2", "plan-1", "Mine now"), { status: 404 });
   assert.equal(queries.some((q) => q.name === "plan.update"), false);
 });
 
