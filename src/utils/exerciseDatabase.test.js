@@ -125,6 +125,14 @@ test("an exercise the equipment can't do is replaced too (not only made-up ones)
   assert.ok(fits(exercisesOf(plan)[0].exerciseId, "dumbbells"));
 });
 
+test("cardio is swapped for cardio, not a push-up", () => {
+  const cardio = (id) => EXERCISE_DB[id].muscles.includes("cardio");
+  assert.ok(cardio(getSubstituteExerciseId("jump_rope", equipmentTagsFor("bodyweight"), ["knees"])));
+  assert.ok(cardio(getSubstituteExerciseId("stationary_bike", equipmentTagsFor("dumbbells"))));
+  assert.ok(cardio(getSubstituteExerciseId("rowing_machine", equipmentTagsFor("dumbbells"))));
+  assert.ok(cardio(getSubstituteExerciseId("jumping_jacks", equipmentTagsFor("full_gym"), ["knees"])));
+});
+
 test("swaps stay kind to the areas the user goes easy on", () => {
   const swap = getSubstituteExerciseId("bench_press", equipmentTagsFor("bodyweight"), ["wrists"]);
   assert.ok(!(EXERCISE_DB[swap].stress ?? []).includes("wrists"), swap);

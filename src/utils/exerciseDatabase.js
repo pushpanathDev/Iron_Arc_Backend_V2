@@ -10,6 +10,8 @@
  *
  * order: where it goes in a session. 1 heavy compound lifts, 2 secondary
  * compounds, 3 isolation, 4 core and conditioning.
+ * muscles: what it trains, the main one first; swaps match on these. Cardio
+ * work lists "cardio" first, so its stand-in is cardio too.
  * equipment: what it needs (see EQUIPMENT_TAGS); none means bodyweight.
  * stress: joints it loads hard (knees, lower_back, shoulders, wrists). A user
  * who goes easy on one of them never gets these: they're left out of the
@@ -120,12 +122,12 @@ const EXERCISE_DB = {
 
   // ── Conditioning ────────────────────────────────────────────────────
   farmers_walk:         { name: "Farmer's Walk",               order: 4, muscles: ["full_body"],                     equipment: ["dumbbells"] },
-  rowing_machine:       { name: "Rowing Machine",              order: 4, muscles: ["full_body"],                     equipment: ["machines"] },
-  stationary_bike:      { name: "Stationary Bike",             order: 4, muscles: [],                                equipment: ["machines"] },
-  jump_rope:            { name: "Jump Rope",                   order: 4, muscles: [],                                equipment: ["jump_rope"], stress: ["knees"] },
-  jumping_jacks:        { name: "Jumping Jacks",               order: 4, muscles: ["full_body"],                     equipment: [], stress: ["knees"] },
-  burpee:               { name: "Burpees",                     order: 4, muscles: ["full_body"],                     equipment: [], stress: ["knees", "wrists"] },
-  mountain_climber:     { name: "Mountain Climbers",           order: 4, muscles: ["core", "full_body"],             equipment: [], stress: ["wrists"] },
+  rowing_machine:       { name: "Rowing Machine",              order: 4, muscles: ["cardio", "full_body"],           equipment: ["machines"] },
+  stationary_bike:      { name: "Stationary Bike",             order: 4, muscles: ["cardio"],                        equipment: ["machines"] },
+  jump_rope:            { name: "Jump Rope",                   order: 4, muscles: ["cardio"],                        equipment: ["jump_rope"], stress: ["knees"] },
+  jumping_jacks:        { name: "Jumping Jacks",               order: 4, muscles: ["cardio", "full_body"],           equipment: [], stress: ["knees"] },
+  burpee:               { name: "Burpees",                     order: 4, muscles: ["cardio", "full_body"],           equipment: [], stress: ["knees", "wrists"] },
+  mountain_climber:     { name: "Mountain Climbers",           order: 4, muscles: ["cardio", "core"],                equipment: [], stress: ["wrists"] },
 };
 
 /** The joints "Go easy on" can protect (the profile's avoidAreas). */
