@@ -1,0 +1,32 @@
+# Once a day: the backend's scheduled jobs, called over HTTPS with the admin
+# key. Today that's the "your Pro trial ends soon" emails (each trial is
+# reminded once, so a re-run is harmless). Needs the ADMIN_SECRET_KEY secret
+# and the BACKEND_URL variable (e.g. https://iron-arc-backend-v2.onrender.com).
+name: Daily jobs
+
+on:
+  schedule:
+    - cron: "30 3 * * *" # 03:30 UTC = 09:00 IST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trial-reminders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Send trial reminders
+        env:
+          ADMIN_SECRET_KEY: ${{ secrets.ADMIN_SECRET_KEY }}
+          BACKEND_URL: ${{ vars.BACKEND_URL }}
+        run: |
+          if [ -z "$ADMIN_SECRET_KEY" ] || [ -z "$BACKEND_URL" ]; then
+            echo "::notice::ADMIN_SECRET_KEY or BACKEND_URL not set, so the daily jobs were skipped."
+            exit 0
+          fi
+          # Render's free plan sleeps: the first call can take a minute to wake it, so allow time and retry.
+          curl --fail-with-body --silent --show-error --max-time 120 --retry 3 --retry-delay 20 --retry-all-errors \
+            -X POST "$BACKEND_URL/api/admin/jobs/trial-reminders" \
+            -H "x-admin-key: $ADMIN_SECRET_KEY"

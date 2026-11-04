@@ -62,11 +62,16 @@ src/app.js                  security headers, JSON body (50 kb), routes, 404, er
   session from another day. "Next week" then writes each following week from
   this one and the user's log.
 - **`utils/planPrompts.js`** has the prompts: week 1, next week, swap, coach.
-- **`utils/exerciseDatabase.js`** is the list of exercises plans may use. Every
-  prompt offers only the exercises the user's equipment allows. It also decides
-  the order within a session and finds replacements.
+- **`utils/exerciseDatabase.js`** is the list of exercises plans may use (95, each
+  named exactly as in the app's catalogue). Every prompt offers only the exercises
+  the user's equipment allows and their "Go easy on" areas don't rule out (each
+  exercise lists the joints it loads hard). It also decides the order within a
+  session and finds the closest replacements. "Go easy on → Other" (`avoidNote`) is
+  the user's own words, sent to the AI only as data; one with a danger sign gets
+  the safety reply instead of being saved.
 - **`utils/planValidator.js`** checks and tidies every plan the AI returns before
-  it's saved (made-up exercises replaced, sensible sets and rest, session order).
+  it's saved (made-up or ruled-out exercises replaced, sensible sets and rest,
+  session order).
 - **The coach chat** is stored inside the plan (`planData._chatHistory`, the last
   40 messages). Every plan change made by the AI is added there with a plain-words
   list of what changed (`utils/planDiff.js`), so the app can show it later.
@@ -111,6 +116,42 @@ Actions it runs on pull requests that change the coach, every Monday and by hand
 (`.github/workflows/coach-eval.yml`, needs the `GROQ_API_KEY` secret). Replies
 users rate thumbs down (`GET /api/admin/ai-feedback`) make good new cases.
 
+## Iron Arc Pro
+
+The coach chat and unlimited new AI plans are Pro (`utils/billing.js`). Free
+accounts get one new AI plan every 30 days (counted from `plan_generations`, so
+deleting a plan doesn't give it back), and next week and swaps on any plan.
+
+- **Plans:** monthly ₹149 or yearly ₹1,199. The first subscription starts with a
+  7-day free trial that leads into the chosen plan: once per person, even after
+  deleting the account. Only a keyed hash of the email is kept for that
+  (`trial_claims`, `utils/trialClaims.js`, `TRIAL_CLAIM_SECRET`).
+- **Test payments:** nothing is charged. A checkout writes a receipt with
+  `provider: "test"` (`services/billingService.js`); a renewal is recorded when
+  the subscription is next read. The provider is kept in one place so Google Play
+  Billing can take over.
+- **One at a time:** every billing change locks the user's row; a checkout carries
+  a key from the app, so a double-tapped Pay starts one subscription.
+- **Cancel** keeps Pro until the period ends. **Change plan** switches monthly ↔
+  yearly from the next renewal.
+- **`PRO_GATE=off`** opens every AI feature to everyone (to deploy before the app
+  that has the Pro screen); Pro itself still works.
+- **Welcome email:** a new member gets "Welcome to the Pro club" with the receipt
+  (`emails/proWelcome.js`, sent through Resend by `services/emailService.js`; a test
+  receipt says so). It never holds up a checkout, and a repeated Pay sends none.
+  Needs `RESEND_API_KEY` and `EMAIL_FROM`; replies go to `EMAIL_REPLY_TO`.
+- **Welcome email** (`emails/welcome.js`, `services/welcomeService.js`): every new account,
+  once, when the profile save that completes onboarding comes from a verified email.
+  Marked in `users.welcomed_at` first (accounts from before it were marked by its
+  migration); a failed send is taken back so the next save tries again.
+- **Other Pro emails** (`emails/proLifecycle.js`): "still Pro until" after a cancel; the
+  receipt when a renewal is recorded (the next time the subscription is read, so
+  usually when the person next opens the app); and "your trial ends soon" two days
+  before a trial turns paid, from `POST /api/admin/jobs/trial-reminders`, which
+  `.github/workflows/daily-jobs.yml` calls every morning (needs the `ADMIN_SECRET_KEY`
+  secret and the `BACKEND_URL` variable in GitHub). Each goes once.
+- **Testing the trial again:** `POST /api/admin/user/:uid/subscription/reset`.
+
 ## API
 
 All responses are `{ success, data?, message? }`. Paged lists also return
@@ -119,20 +160,37 @@ All responses are `{ success, data?, message? }`. Paged lists also return
 | Area | Endpoints |
 |------|-----------|
 | Health | `GET /api/health` (public) |
-| User | `POST /api/user/sync` · `GET /api/user/profile` · `PATCH /api/user/profile` · `PUT /api/user/health-check` · `DELETE /api/user/account` (needs a sign-in from the last 5 minutes) |
+| App | `GET /api/app/version` (public): the latest release, for the in-app update prompt |
+| User | `POST /api/user/sync` · `GET /api/user/profile` · `PATCH /api/user/profile` · `PATCH /api/user/preferences` (theme, kg/lb, reps, bars; applied on sign-in) · `PUT /api/user/health-check` · `DELETE /api/user/account` (needs a sign-in from the last 5 minutes) |
 | Workouts | `POST /api/workouts` · `POST /api/workouts/batch` (a whole session, all or nothing) · `GET /api/workouts` · `GET`/`PATCH`/`DELETE /api/workouts/:id` |
 | Body weight | `POST /api/weights` (one entry per day) · `GET /api/weights` · `GET /api/weights/latest` · `DELETE /api/weights/:id` |
 | Custom exercises | `POST /api/exercises` · `GET /api/exercises` · `DELETE /api/exercises/:id` |
 | Achievements | `GET /api/achievements` |
+| Billing | `GET /api/billing` · `POST /api/billing/checkout` · `POST /api/billing/cancel` · `POST /api/billing/resume` · `POST /api/billing/change-plan` |
 | Plans | `GET /api/plans` · `POST /api/plans/generate` · `GET /api/plans/:id` · `POST /api/plans/:id/recalibrate` (next week) · `POST /api/plans/:id/substitute` · `PATCH /api/plans/:id/name` · `PATCH /api/plans/:id/activate` · `DELETE /api/plans/:id` · `POST /api/plans/:id/chat` · `POST /api/plans/:id/chat/report` · `POST /api/plans/:id/chat/feedback` · `POST /api/plans/:id/proposals/:proposalId/apply` · `…/dismiss` |
-| Admin | `GET /api/admin/users` · `DELETE /api/admin/user/:uid` · `POST /api/admin/user/:uid/disable` · `GET /api/admin/ai-reports` · `POST /api/admin/ai-reports/:id/reviewed` · `GET /api/admin/ai-feedback` (header `x-admin-key`; `:uid` is the Firebase UID) |
+| Admin | `GET /api/admin/users` · `DELETE /api/admin/user/:uid` · `POST /api/admin/user/:uid/disable` · `GET /api/admin/ai-reports` · `POST /api/admin/ai-reports/:id/reviewed` · `GET /api/admin/ai-feedback` · `POST /api/admin/user/:uid/subscription/reset` · `POST /api/admin/jobs/trial-reminders` (header `x-admin-key`; `:uid` is the Firebase UID) |
 
-Generate, next week, swap and chat need the health check (403 `HEALTH_CHECK_REQUIRED` or `COACH_ADULTS_ONLY` otherwise).
+Generate, next week, swap and chat are for adults who did the health check (403 `COACH_ADULTS_ONLY` or `HEALTH_CHECK_REQUIRED`); chat needs Pro (`PRO_REQUIRED`) and a new plan needs Pro or the free one (`PLAN_LIMIT_REACHED`). The profile includes `pro` and `freePlan`.
 
 **Rate limits:** 200 requests per 15 minutes per user across the API; 5 plan
 generations or "next week"s per hour (`MAX_PLAN_GENERATIONS_PER_HOUR`); 30 coach
 messages per hour (`MAX_PLAN_CHATS_PER_HOUR`); 30 admin requests per 15 minutes
 per IP.
+
+## Releasing an app update
+
+The app asks `GET /api/app/version` on start, and the answer comes from the
+latest GitHub release of [Iron_Arc-app](https://github.com/pushpanathDev/Iron_Arc-app)
+(`src/utils/appRelease.js`, read at most every 10 minutes). So publishing a
+release there is the whole update, with nothing to change here:
+
+1. Tag `vX.Y.Z` (the app's version), with the APK attached as `Iron-Arc-X.Y.Z.apk`.
+2. "What's new" is its bullet points (the bold part of each, up to 8).
+3. Tick **Set as the latest release**.
+
+Older apps are offered it, then must update 3 days after it was published
+(`APP_UPDATE_GRACE_DAYS`); `APP_MIN_VERSION` makes anything older update at
+once. Setting `APP_LATEST_VERSION` switches to manual control (see `.env.example`).
 
 ## Database
 

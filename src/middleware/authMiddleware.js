@@ -1,6 +1,7 @@
 const { auth } = require("../config/firebase");
 const userService = require("../services/userService");
 const { userLimiter } = require("./rateLimiter");
+const { isGoogleConfirmation } = require("../utils/googleReauth");
 
 /**
  * Verifies the Firebase ID token from the React Native app.
@@ -78,6 +79,8 @@ function createTokenVerifier({ checkRevoked = false } = {}) {
       email: decodedToken.email,
       emailVerified: decodedToken.email_verified ?? false,
       authTime: decodedToken.auth_time,
+      // The Google account ids linked to this user (to check a fresh Google confirmation).
+      googleIds: decodedToken.firebase?.identities?.["google.com"] ?? [],
       dbUser,
     };
 
@@ -104,20 +107,26 @@ async function requireEmailVerified(req, res, next) {
   next();
 }
 
-function requireRecentSignIn(req, res, next) {
+/**
+ * A sign-in from the last 5 minutes: the token's sign-in time, or for Google
+ * accounts (where Firebase keeps the first sign-in time) the Google
+ * confirmation the app sends in x-google-reauth (utils/googleReauth.js).
+ */
+async function requireRecentSignIn(req, res, next) {
   const authTime = req.user?.authTime;
   const recentSignInWindowSeconds = 5 * 60;
   const ageSeconds = authTime ? Math.floor(Date.now() / 1000) - authTime : Infinity;
+  if (ageSeconds <= recentSignInWindowSeconds) return next();
 
-  if (ageSeconds > recentSignInWindowSeconds) {
-    return res.status(401).json({
-      success: false,
-      code: "REAUTHENTICATION_REQUIRED",
-      message: "Recent sign-in required. Please re-authenticate and try again.",
-    });
-  }
+  const googleToken = req.get("x-google-reauth");
+  if (googleToken && (await isGoogleConfirmation(googleToken, req.user?.googleIds))) return next();
 
-  next();
+  console.warn(`[auth] Sign-in not recent for ${req.user?.uid}: signed in ${authTime ? new Date(authTime * 1000).toISOString() : "unknown"}, ${ageSeconds}s ago (limit ${recentSignInWindowSeconds}s)${googleToken ? "; the Google confirmation didn't check out" : ""}`);
+  return res.status(401).json({
+    success: false,
+    code: "REAUTHENTICATION_REQUIRED",
+    message: "Recent sign-in required. Please re-authenticate and try again.",
+  });
 }
 
 module.exports = {

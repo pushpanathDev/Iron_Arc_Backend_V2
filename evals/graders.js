@@ -49,6 +49,17 @@ const keepsRestDay = () => onPending("keeps a rest day", (days) => (trainingDays
 
 const trainsDays = (n) => onPending(`trains ${n} days`, (days) => (trainingDays(days).length === n ? null : `${trainingDays(days).length} training days`));
 
+/** The suggested week has at least one of these exercises (e.g. any chest fly). */
+const includesAny = (exerciseIds, label) =>
+  onPending(`includes ${label}`, (days) => (exercisesOf(days).some((ex) => exerciseIds.includes(ex.exerciseId)) ? null : `no ${label}`));
+
+/** The suggested week has none of these exercises (e.g. ones a joint should be spared). */
+const avoidsAll = (exerciseIds, label) =>
+  onPending(`avoids ${label}`, (days) => {
+    const found = exercisesOf(days).filter((ex) => exerciseIds.includes(ex.exerciseId)).map((ex) => ex.exerciseId);
+    return found.length ? `has ${[...new Set(found)].join(", ")}` : null;
+  });
+
 const excludes = (exerciseId) => onPending(`drops ${exerciseId}`, (days) => (exercisesOf(days).some((ex) => ex.exerciseId === exerciseId) ? `still has ${exerciseId}` : null));
 
 const maxMinutes = (n) =>
@@ -86,6 +97,8 @@ module.exports = {
   keepsRestDay,
   trainsDays,
   excludes,
+  includesAny,
+  avoidsAll,
   maxMinutes,
   noMoreVolume,
   withinSafeLimits,

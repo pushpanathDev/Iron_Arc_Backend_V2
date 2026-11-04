@@ -3,6 +3,7 @@ const { prisma } = require("../config/database");
 const { HttpError } = require("../utils/httpError");
 const { anonymizeIronArcProfile } = require("../utils/anonymizer");
 const { safeModeOf } = require("../utils/healthCheck");
+const { claimFreePlan } = require("./billingService");
 const { dangerSign, outOfScope, leaksInstructions, NUTRITION_REPLY, LEAK_REPLY } = require("../utils/safetyTriage");
 const { validateAndSanitizePlan, weekProblems, saferFrom } = require("../utils/planValidator");
 const { aiText, promptText } = require("../utils/aiText");
@@ -11,7 +12,7 @@ const { compactWeek, applyWeekChange, changedDays, chatOf, withoutChat, withChat
 const { diffPlanWeek, dayShortName } = require("../utils/planDiff");
 const { dateKey, addDays, withWeekday, mondayOf, shortDay } = require("../utils/dates");
 const { planHasExercise, exerciseNameIn, applySubstitution } = require("../utils/planSwap");
-const { EXERCISE_DB, equipmentTagsFor, allowedExerciseIds, getSubstituteExerciseId } = require("../utils/exerciseDatabase");
+const { EXERCISE_DB, equipmentTagsFor, avoidAreasOf, allowedExerciseIds, getSubstituteExerciseId, ruledOutIn, goEasySwapNote } = require("../utils/exerciseDatabase");
 const { buildFirstWeekPrompt, buildNextWeekPrompt, buildSubstitutePrompt, buildPlanChatPrompt } = require("../utils/planPrompts");
 const {
   SPLIT_NAMES,
@@ -27,7 +28,6 @@ const {
   firstWeekStartsOn,
   weekStartsOn,
 } = require("../utils/planSchedule");
-const { WEEKDAYS } = require("../utils/planChat");
 const { askForJson } = require("./aiClient");
 const { checkAiBudget, recordAiUsage } = require("./aiBudget");
 const { evaluateAchievementsSafely } = require("./achievementService");
@@ -100,10 +100,10 @@ function workoutLine(w) {
  * The change must pass the validator's limits and the week rules (a rest day).
  * In Safe mode it's bounded further and may add only a little to the week.
  */
-function checkedWeekChange(planOnly, weekNumber, days, equipment, { safeMode = false, ...options } = {}) {
+function checkedWeekChange(planOnly, weekNumber, days, equipment, { safeMode = false, avoid = [], ...options } = {}) {
   try {
     const week = weekNumber || 1;
-    const validated = validateAndSanitizePlan(applyWeekChange(planOnly, weekNumber, days, options), equipment);
+    const validated = validateAndSanitizePlan(applyWeekChange(planOnly, weekNumber, days, options), equipment, { avoid, fromWeek: week });
     const plan = safeMode ? saferFrom(validated, week) : validated;
     const problems = weekProblems(plan.weeks?.[week - 1]?.days, { safeMode, before: planOnly.weeks?.[week - 1]?.days });
     return problems.length > 0 ? { problems } : { plan };
@@ -203,17 +203,23 @@ function settingsFor(user, criteria) {
   return safeModeOf(user) ? { ...settings, intensity: "conservative" } : settings;
 }
 
-/** `today` is the user's date ("YYYY-MM-DD"); week 1 is this calendar week, or next week's when made at the weekend. */
-async function generatePlan(user, criteria = {}, today = dateKey()) {
+/**
+ * `today` is the user's date ("YYYY-MM-DD"); week 1 is this calendar week, or
+ * next week's when made at the weekend. `freePlan`: the user has no Pro, so
+ * the plan uses their free one (refused if another request took it meanwhile).
+ */
+async function generatePlan(user, criteria = {}, today = dateKey(), { freePlan = false } = {}) {
   const settings = settingsFor(user, criteria);
   const { days, planExplanation } = await aiWeekOnSchedule(user, settings, "Couldn't build your plan right now. Please try again in a moment.");
   const validated = validateAndSanitizePlan(
     { planExplanation, totalWeeks: settings.totalWeeks, weekStartsOn: firstWeekStartsOn(today), weeks: [{ week: 1, isDeloadWeek: false, days }] },
     equipmentTagsFor(settings.equipment),
+    { avoid: avoidAreasOf(user) },
   );
   const planData = safeModeOf(user) ? saferFrom(validated) : validated;
 
   const plan = await prisma.$transaction(async (tx) => {
+    if (freePlan) await claimFreePlan(tx, user.id);
     const existingPlans = await tx.plan.count({ where: { userId: user.id } });
     await tx.plan.updateMany({ where: { userId: user.id, isActive: true }, data: { isActive: false } });
     // Append-only log for the "plans generated" badges (plans themselves can be deleted).
@@ -271,12 +277,12 @@ async function recalibratePlan(user, planId, today = dateKey()) {
     totalWeeks,
     progression: settings.progression,
     deload: isDeloadWeek(next),
-    exerciseIds: allowedExerciseIds(equipment),
+    exerciseIds: allowedExerciseIds(equipment, avoidAreasOf(user)),
   });
   /** The AI's next week, checked, or null when it sent none or an unusable one. */
   const adjust = (reply) => {
     const days = changedDays(reply);
-    return days ? (checkedWeekChange(planOnly, next, days, equipment, { onlyThisWeek: true, safeMode }).plan ?? null) : null;
+    return days ? (checkedWeekChange(planOnly, next, days, equipment, { onlyThisWeek: true, safeMode, avoid: avoidAreasOf(user) }).plan ?? null) : null;
   };
   const ask = async () => parseReply(weekChangeReply, await askAi(prompt, { userId: user.id, maxTokens: 3000, unavailable }));
 
@@ -290,8 +296,10 @@ async function recalibratePlan(user, planId, today = dateKey()) {
   }
   // Still nothing: the move goes ahead with next week as it stands, and says so.
   let message = aiText(reply?.message, 700) || `Week ${next} is ready.`;
+  const swapNote = adjusted ? goEasySwapNote(changedDays(reply), adjusted.weeks?.[next - 1]?.days, avoidAreasOf(user)) : null;
+  if (swapNote) message = `${message} ${swapNote}`;
   if (!adjusted) {
-    adjusted = validateAndSanitizePlan(planOnly, equipment);
+    adjusted = validateAndSanitizePlan(planOnly, equipment, { avoid: avoidAreasOf(user), fromWeek: next });
     if (safeMode) adjusted = saferFrom(adjusted, next);
     message = `Week ${next} is ready, as planned. (I couldn't adjust it from your log this time.)`;
   }
@@ -328,8 +336,20 @@ async function substituteExercise(user, planId, exerciseId, reason) {
   if (!planHasExercise(plan.planData, exerciseId)) {
     throw new HttpError(422, `Exercise "${exerciseId}" was not found in this plan.`);
   }
+  // A danger sign in the reason ("sharp pain in my knee") gets the chat's fixed
+  // safety reply instead of a swap, without the AI. It's kept in the coach chat.
+  const sign = dangerSign(reason);
+  if (sign) {
+    console.warn(`[swap] danger sign (${sign.kind}) in the reason: no swap`);
+    const asked = { role: "user", content: `Swap ${exerciseNameIn(plan.planData, exerciseId) ?? exerciseId}: ${reason}`, timestamp: now() };
+    const safetyReply = { role: "assistant", kind: "safety", content: sign.reply, timestamp: now() };
+    const planData = withChat(withoutChat(plan.planData), chatOf(plan.planData), [asked, safetyReply], pendingChangeOf(plan.planData));
+    await prisma.plan.update({ where: { id: planId }, data: { planData } });
+    throw new HttpError(422, sign.reply, "SAFETY_STOP");
+  }
   const equipment = equipmentOf(user, plan.criteria);
-  const allowed = allowedExerciseIds(equipment);
+  const avoid = avoidAreasOf(user);
+  const allowed = allowedExerciseIds(equipment, avoid);
 
   const prompt = buildSubstitutePrompt(exerciseId, reason, anonymizeIronArcProfile(user), allowed);
   const reply = parseReply(
@@ -343,12 +363,13 @@ async function substituteExercise(user, planId, exerciseId, reason) {
 
   // The AI's pick if it's a different exercise the user can do, else the closest one we know.
   const pick = reply?.substituteExerciseId;
-  const newId = allowed.includes(pick) && pick !== exerciseId ? pick : getSubstituteExerciseId(exerciseId, equipment);
+  const newId = allowed.includes(pick) && pick !== exerciseId ? pick : getSubstituteExerciseId(exerciseId, equipment, avoid);
   const newName = EXERCISE_DB[newId].name;
 
   const swapped = validateAndSanitizePlan(
     applySubstitution(plan.planData, exerciseId, { id: newId, name: newName, reason: aiText(reply?.reason, 160) || reason || "Exercise substitution" }),
     equipment,
+    { avoid, fromWeek: plan.weekNumber || 1 },
   );
   const note = {
     role: "assistant",
@@ -362,6 +383,37 @@ async function substituteExercise(user, planId, exerciseId, reason) {
     where: { id: planId },
     data: { planData: withChat(swapped, chatOf(plan.planData), [note]) },
   });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Safe mode on a plan made before it
+───────────────────────────────────────────────────────────── */
+/**
+ * Brings a plan within Safe mode's limits from this week on (at most 4 sets,
+ * 8+ reps, 60 s rest; planValidator's SAFE_LIMITS), without the AI. For a plan
+ * made before the health check turned Safe mode on. Noted in the coach chat;
+ * `changed` is false when it already fit.
+ */
+async function makePlanSafer(user, planId) {
+  if (!safeModeOf(user)) throw new HttpError(409, "Safe mode is off, so your plan can stay as it is.", "SAFE_MODE_OFF");
+  const plan = await findOwnPlan(user.id, planId);
+  const week = plan.weekNumber || 1;
+  const planOnly = withoutChat(plan.planData);
+  const safer = saferFrom(planOnly, week);
+  const changes = diffPlanWeek(planOnly, safer, week);
+  if (changes.length === 0) return { plan, changed: false };
+
+  const note = {
+    role: "assistant",
+    kind: "safeMode",
+    content: "Made your plan gentler for Safe mode: at most 4 sets, 8 or more reps and at least 60 seconds' rest, from this week on.",
+    timestamp: now(),
+    planUpdated: true,
+    changes,
+  };
+  // A suggestion waiting from before no longer fits the plan, so it expires.
+  const updated = await prisma.plan.update({ where: { id: planId }, data: { planData: withChat(safer, chatOf(plan.planData), [note]) } });
+  return { plan: updated, changed: true };
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -404,7 +456,6 @@ async function followTrainingDays(user, days) {
   const weekdays = weekTrainingDays(days);
   if (weekdays.length === 0 || weekdays.length > 6 || weekdays.join() === trainingWeekdays(user).join()) return false;
   await prisma.user.update({ where: { id: user.id }, data: { trainingDays: weekdays, weeklyGoal: weekdays.length } });
-  console.log(`[planChat] training days now ${weekdays.map((d) => WEEKDAYS[d - 1].slice(0, 3)).join(", ")}`);
   return true;
 }
 
@@ -467,7 +518,8 @@ async function chatWithPlan(user, planId, userMessage, today = dateKey()) {
     thisWeek: describeWeek(current, thisWeek, startsOn),
     lastWeek: lastWeek ? describeWeek(lastWeek.number, planOnly.weeks?.[lastWeek.number - 1]?.days ?? [], lastWeek.startsOn) : null,
     logged: workouts.filter((w) => dateKey(new Date(w.date)) >= addDays(today, -7)).map(workoutLine),
-    exerciseIds: allowedExerciseIds(equipment),
+    exerciseIds: allowedExerciseIds(equipment, avoidAreasOf(user)),
+    ruledOut: ruledOutIn(thisWeek, avoidAreasOf(user)),
   });
   const unavailable = "The coach couldn't answer right now. Please try again in a moment.";
   const raw = await askAi(prompt, { userId: user.id, maxTokens: 3000, unavailable });
@@ -488,9 +540,11 @@ async function chatWithPlan(user, planId, userMessage, today = dateKey()) {
   let changedPlan = null;
   const days = reply ? changedDays(reply) : null;
   if (days) {
-    const checked = checkedWeekChange(planOnly, plan.weekNumber, days, equipment, { safeMode: safeModeOf(user) });
+    const checked = checkedWeekChange(planOnly, plan.weekNumber, days, equipment, { safeMode: safeModeOf(user), avoid: avoidAreasOf(user) });
     if (checked.plan) {
       changedPlan = checked.plan;
+      const note = goEasySwapNote(days, changedPlan.weeks?.[(plan.weekNumber || 1) - 1]?.days, avoidAreasOf(user));
+      if (note) message = `${message} ${note}`;
     } else if (checked.problems.includes("too big a jump")) {
       console.warn("[planChat] Safe mode: AI change added too much at once; keeping the current plan");
       message = `${message} (I kept your plan as it was: in Safe mode, a change can only add a little training at a time.)`;
@@ -558,7 +612,7 @@ async function applyProposal(user, planId, proposalId) {
   let applied = null;
   if (pending.basedOn === planFingerprint(planOnly, plan.weekNumber)) {
     try {
-      const candidate = validateAndSanitizePlan({ ...planOnly, weeks: pending.weeks }, equipmentOf(user, plan.criteria));
+      const candidate = validateAndSanitizePlan({ ...planOnly, weeks: pending.weeks }, equipmentOf(user, plan.criteria), { avoid: avoidAreasOf(user), fromWeek: week });
       if (weekProblems(candidate.weeks?.[week - 1]?.days).length === 0) applied = candidate;
     } catch {
       applied = null;
@@ -590,6 +644,7 @@ module.exports = {
   generatePlan,
   recalibratePlan,
   substituteExercise,
+  makePlanSafer,
   renamePlan,
   activatePlan,
   deletePlan,

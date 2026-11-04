@@ -3,6 +3,7 @@ const { validateRequiredEnv } = require("./config/env");
 
 validateRequiredEnv();
 
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -17,6 +18,8 @@ const workoutRoutes = require("./routes/workoutRoutes");
 const bodyWeightRoutes = require("./routes/bodyWeightRoutes");
 const customExerciseRoutes = require("./routes/customExerciseRoutes");
 const achievementRoutes = require("./routes/achievementRoutes");
+const billingRoutes = require("./routes/billingRoutes");
+const appRoutes = require("./routes/appRoutes");
 
 const app = express();
 
@@ -34,8 +37,8 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 app.use(
   cors({
     origin: allowedOrigins.includes("*") ? true : allowedOrigins,
-    methods: ["GET", "POST", "PATCH", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-admin-key"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-admin-key", "x-google-reauth"],
     credentials: true,
     maxAge: 86400,
   })
@@ -44,14 +47,27 @@ app.use(
 // ── Body Parsing ───────────────────────────────────────────────────────
 app.use(express.json({ limit: "50kb" }));
 
+// ── Static files ─────────────────────────────────────────────────────
+// Images emails link to (the logo). Other sites may show them, so they opt out of
+// helmet's same-origin rule; cached for a week.
+app.use(
+  "/static",
+  express.static(path.join(__dirname, "..", "public"), {
+    maxAge: "7d",
+    setHeaders: (res) => res.setHeader("Cross-Origin-Resource-Policy", "cross-origin"),
+  }),
+);
+
 // ── Routes ─────────────────────────────────────────────────────────────
 app.use("/api/health", healthRoutes);
+app.use("/api/app", appRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/workouts", workoutRoutes);
 app.use("/api/weights", bodyWeightRoutes);
 app.use("/api/exercises", customExerciseRoutes);
 app.use("/api/achievements", achievementRoutes);
 app.use("/api/plans", planRoutes);
+app.use("/api/billing", billingRoutes);
 app.use("/api/admin", adminLimiter, adminRoutes);
 
 // ── 404 Catch-All ──────────────────────────────────────────────────────
