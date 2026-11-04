@@ -15,13 +15,21 @@
  *                          APP_DOWNLOAD_URL, APP_RELEASED_AT and
  *                          APP_RELEASE_NOTES ("|" between lines)
  *
+ * - GITHUB_TOKEN           a read-only token GitHub is asked with. Without
+ *                          one GitHub allows 60 questions an hour per
+ *                          address, and Render's addresses are shared, so
+ *                          that runs out (GitHub answers 403).
+ *
  * GitHub is asked at most every 10 minutes; if it can't be reached, the last
- * answer stands (or there's nothing to announce).
+ * answer stands (or there's nothing to announce) and it's asked again in a
+ * minute, or when GitHub says its limit resets.
  */
 const DEFAULT_REPO = "pushpanathDev/Iron_Arc-app";
 const DEFAULT_GRACE_DAYS = 3;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CACHE_MS = 10 * 60 * 1000;
+const RETRY_MS = 60 * 1000;
+const MAX_RETRY_MS = 60 * 60 * 1000;
 const VERSION = /^\d+\.\d+\.\d+$/;
 const MAX_NOTES = 8;
 
@@ -99,12 +107,29 @@ function partsFromGitHub(gh) {
   };
 }
 
-async function fetchLatestGitHubRelease(repo) {
+/** When a refusing GitHub says to ask again (ms since 1970), or null. */
+function retryAtOf(headers, now) {
+  const after = Number(headers.get("retry-after"));
+  if (after > 0) return now + after * 1000;
+  const reset = Number(headers.get("x-ratelimit-reset"));
+  return headers.get("x-ratelimit-remaining") === "0" && reset > 0 ? reset * 1000 : null;
+}
+
+async function fetchLatestGitHubRelease(repo, { token } = {}) {
   const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
-    headers: { Accept: "application/vnd.github+json", "User-Agent": "iron-arc-backend" },
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "iron-arc-backend",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     signal: AbortSignal.timeout(8000),
   });
-  if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
+  if (!res.ok) {
+    const limited = res.status === 403 || res.status === 429;
+    const error = new Error(`GitHub answered ${res.status}${limited && !token ? " (set GITHUB_TOKEN: without one, Render's shared address runs out of GitHub's 60 an hour)" : ""}`);
+    error.retryAt = retryAtOf(res.headers, Date.now());
+    throw error;
+  }
   return res.json();
 }
 
@@ -121,11 +146,12 @@ async function latestRelease(env = process.env, { fetchRelease = fetchLatestGitH
   const repo = env.APP_RELEASES_REPO?.trim() || DEFAULT_REPO;
   if (cached.repo !== repo || now - cached.at >= CACHE_MS) {
     try {
-      cached = { at: now, repo, parts: partsFromGitHub(await fetchRelease(repo)) };
+      cached = { at: now, repo, parts: partsFromGitHub(await fetchRelease(repo, { token: env.GITHUB_TOKEN?.trim() || undefined })) };
     } catch (error) {
       console.warn(`[appRelease] Couldn't read the latest release from GitHub: ${error.message}`);
-      // The last answer stands for now; GitHub is asked again in a minute.
-      cached = { ...cached, repo, at: now - CACHE_MS + 60 * 1000 };
+      // The last answer stands for now; GitHub is asked again in a minute, or when it says its limit resets (at most an hour).
+      const wait = Math.min(Math.max(error.retryAt ? error.retryAt - now : 0, RETRY_MS), MAX_RETRY_MS);
+      cached = { ...cached, repo, at: now - CACHE_MS + wait };
     }
   }
   return cached.parts ? releaseFrom(cached.parts, env) : null;
