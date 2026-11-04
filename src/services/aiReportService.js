@@ -76,7 +76,6 @@ function listReports(status = "open") {
   return prisma.aiReport.findMany({ where: { status }, orderBy: { createdAt: "desc" }, take: 100 });
 }
 
-/** Marks a report reviewed. */
 async function markReviewed(id) {
   const { count } = await prisma.aiReport.updateMany({ where: { id }, data: { status: "reviewed" } });
   if (count === 0) throw new HttpError(404, "Report not found.");

@@ -9,10 +9,20 @@ let claims;
 let payments;
 let plansMade;
 let paymentsMade;
+let locks;
+let userWrites;
 const fakeDb = {
   $transaction: async (work) => (Array.isArray(work) ? Promise.all(work) : work(fakeDb)),
+  // The row lock (a tagged template: the SQL's pieces, then its values).
+  $queryRaw: async (sql, ...values) => {
+    locks.push({ sql: sql.join("?"), values });
+    return [];
+  },
   user: {
-    update: async () => ({}),
+    update: async () => {
+      userWrites += 1;
+      return {};
+    },
     findUnique: async ({ where }) => (where.firebaseUid === "uid-1" ? { id: "user-1", email: "Lifter+gym@Gmail.com", subscription: subs.get("user-1") ?? null } : null),
   },
   trialClaim: {
@@ -92,6 +102,17 @@ beforeEach(() => {
   payments = [];
   plansMade = [];
   paymentsMade = 0;
+  locks = [];
+  userWrites = 0;
+});
+
+test("billing locks the account row without changing it", async () => {
+  await billing.checkout(user, { plan: "monthly", key: "key-00001" }, NOW);
+  await billing.billingOf(user, at("2026-12-05T00:00:00Z")); // a renewal is due: settled under the lock
+  await billing.claimFreePlan(fakeDb, "user-1", NOW);
+  assert.ok(locks.length >= 2);
+  assert.ok(locks.every((lock) => /FOR UPDATE/.test(lock.sql) && lock.values[0] === "user-1"));
+  assert.equal(userWrites, 0, "no write to the account (its updatedAt stays)");
 });
 
 test("the first checkout starts the 7-day trial, leading into the chosen plan", async () => {

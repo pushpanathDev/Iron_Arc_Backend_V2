@@ -1,6 +1,6 @@
 const rateLimit = require("express-rate-limit");
 
-// ── Plan Generation Limiter ────────────────────────────────────────────
+// Plan Generation Limiter
 // Strict limiter — Groq calls are expensive, limit plan generation per user
 const planGenerationLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour window
@@ -14,7 +14,7 @@ const planGenerationLimiter = rateLimit({
   keyGenerator: (req) => req.user?.uid || req.ip,
 });
 
-// ── Authenticated User Limiter ─────────────────────────────────────────
+// Authenticated User Limiter
 // Per-user cap across every authenticated /api route. Runs at the end of
 // verifyFirebaseToken, so req.user.uid is always set.
 const userLimiter = rateLimit({
@@ -26,7 +26,7 @@ const userLimiter = rateLimit({
   keyGenerator: (req) => req.user.uid,
 });
 
-// ── Admin Limiter ──────────────────────────────────────────────────────
+// Admin Limiter
 // Strict per-IP cap on /api/admin (static-key auth, so throttle guessing).
 // Relies on app.set('trust proxy', 1) for the real client IP behind Render.
 const adminLimiter = rateLimit({
@@ -37,7 +37,7 @@ const adminLimiter = rateLimit({
   message: { success: false, message: "Too many requests." },
 });
 
-// ── Plan Coach Chat Limiter ─────────────────────────────────────────────
+// Plan Coach Chat Limiter
 // Chat messages are short AI calls; they get their own budget so a few
 // messages never block generating a plan (and vice versa).
 const planChatLimiter = rateLimit({

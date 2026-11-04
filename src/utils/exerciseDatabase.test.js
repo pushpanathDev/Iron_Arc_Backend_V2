@@ -67,7 +67,7 @@ test("an exercise without a progression note gets one that fits its reps", () =>
   ]);
 });
 
-// ── The bigger catalogue and "Go easy on" ─────────────────────────────────
+// The bigger catalogue and "Go easy on"
 test("every exercise is well formed: a known order, muscles, equipment and stress areas", () => {
   const tags = new Set(equipmentTagsFor("full_gym"));
   for (const [id, ex] of Object.entries(EXERCISE_DB)) {
@@ -125,6 +125,14 @@ test("an exercise the equipment can't do is replaced too (not only made-up ones)
   assert.ok(fits(exercisesOf(plan)[0].exerciseId, "dumbbells"));
 });
 
+test("cardio is swapped for cardio, not a push-up", () => {
+  const cardio = (id) => EXERCISE_DB[id].muscles.includes("cardio");
+  assert.ok(cardio(getSubstituteExerciseId("jump_rope", equipmentTagsFor("bodyweight"), ["knees"])));
+  assert.ok(cardio(getSubstituteExerciseId("stationary_bike", equipmentTagsFor("dumbbells"))));
+  assert.ok(cardio(getSubstituteExerciseId("rowing_machine", equipmentTagsFor("dumbbells"))));
+  assert.ok(cardio(getSubstituteExerciseId("jumping_jacks", equipmentTagsFor("full_gym"), ["knees"])));
+});
+
 test("swaps stay kind to the areas the user goes easy on", () => {
   const swap = getSubstituteExerciseId("bench_press", equipmentTagsFor("bodyweight"), ["wrists"]);
   assert.ok(!(EXERCISE_DB[swap].stress ?? []).includes("wrists"), swap);
@@ -137,9 +145,23 @@ test("the coach is told what an older plan has that go easy on now rules out, an
   assert.deepEqual(ruledOutIn(days, ["knees"]), ["Barbell Back Squat (knees)"]);
   assert.deepEqual(ruledOutIn(days, []), []);
 
-  const ai = [{ d: "tuesday", x: [{ id: "squat" }, { id: "lunge" }, { id: "leg_curl" }] }];
-  const checked = [{ day: "tuesday", exercises: [{ exerciseId: "leg_press" }, { exerciseId: "goblet_squat" }, { exerciseId: "leg_curl" }] }];
-  assert.equal(goEasySwapNote(ai, checked, ["knees"]), "To go easy on your knees, this uses Leg Press instead of Barbell Back Squat and Goblet Squat instead of Walking Lunges.");
-  assert.equal(goEasySwapNote([{ d: "tuesday", x: [{ id: "leg_curl" }] }], checked, ["knees"]), null, "nothing swapped");
-  assert.equal(goEasySwapNote(ai, checked, []), null);
+  const swaps = [
+    { week: 1, from: "squat", to: "leg_press" },
+    { week: 1, from: "lunge", to: "goblet_squat" },
+  ];
+  assert.equal(goEasySwapNote(swaps, ["knees"]), "To go easy on your knees, this uses Leg Press instead of Barbell Back Squat and Goblet Squat instead of Walking Lunges.");
+  assert.equal(goEasySwapNote([], ["knees"]), null, "nothing swapped");
+  assert.equal(goEasySwapNote(swaps, []), null);
+});
+
+test("the go easy on note names the real swap when another was for equipment", () => {
+  // Dumbbells only, going easy on knees: Leg Press goes for the equipment, the squat for the knees.
+  const swaps = [];
+  const day = { day: "tuesday", sessionType: "training", targetMuscles: ["quads"], exercises: [{ exerciseId: "leg_press" }, { exerciseId: "squat" }] };
+  const plan = validateAndSanitizePlan({ weeks: [{ week: 1, days: [day] }] }, equipmentTagsFor("dumbbells"), { avoid: ["knees"], onSwap: (swap) => swaps.push(swap) });
+  assert.equal(swaps.length, 2);
+  const forKnees = swaps.find((s) => s.from === "squat");
+  assert.ok(plan.weeks[0].days[0].exercises.some((ex) => ex.exerciseId === forKnees.to));
+  // Only the knee swap is named, with what really replaced the squat.
+  assert.equal(goEasySwapNote(swaps, ["knees"]), `To go easy on your knees, this uses ${EXERCISE_DB[forKnees.to].name} instead of Barbell Back Squat.`);
 });

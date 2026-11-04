@@ -33,7 +33,7 @@ function workout(date, exercise, category, sets, createdAt) {
   return { date, exercise, category, sets, createdAt: createdAt || `${date}T10:00:00Z` };
 }
 
-// ── Catalog ─────────────────────────────────────────────────────────────────
+// Catalog
 check("28 badges", ACHIEVEMENT_DEFINITIONS.length, 28);
 check("keys are unique", new Set(ACHIEVEMENT_DEFINITIONS.map((d) => d.key)).size, 28);
 check(
@@ -57,7 +57,7 @@ check(
   true,
 );
 
-// ── Streaks ─────────────────────────────────────────────────────────────────
+// Streaks
 check("empty history", computeStreaks([], "2026-10-10"), { currentStreak: 0, longestStreak: 0 });
 check("alive (trained today), duplicates ignored",
   computeStreaks(["2026-10-08", "2026-10-09", "2026-10-10", "2026-10-10"], "2026-10-10"),
@@ -78,7 +78,7 @@ check("latest day one ahead of server today (UTC+ user) counts as alive",
   computeStreaks(["2026-10-10", "2026-10-11"], "2026-10-10"),
   { currentStreak: 2, longestStreak: 2 });
 
-// ── Weekly streak (weeks in a row meeting the goal) ─────────────────────────
+// Weekly streak (weeks in a row meeting the goal)
 // Mondays: 2026-09-21, 09-28, 10-05. Goal 2 days a week.
 const twoAWeek = ["2026-09-21", "2026-09-23", "2026-09-28", "2026-09-30", "2026-10-05", "2026-10-07"];
 check("three weeks met, this week included", computeWeekStreaks(twoAWeek, "2026-10-08", 2), { currentWeekStreak: 3, longestWeekStreak: 3 });
@@ -92,7 +92,7 @@ check("rest days don't matter, only days per week",
   computeWeekStreaks(["2026-09-21", "2026-09-27", "2026-09-28", "2026-10-04"], "2026-10-04", 2),
   { currentWeekStreak: 2, longestWeekStreak: 2 });
 
-// ── Weekly consistency (Mon–Sun) ────────────────────────────────────────────
+// Weekly consistency (Mon–Sun)
 // 2026-10-05 is a Monday.
 check("4 days in one week", computeWeekly(["2026-10-05", "2026-10-06", "2026-10-08", "2026-10-11"]),
   { bestWeekDays: 4, consecutive4xWeeks: 1 });
@@ -104,7 +104,7 @@ check("4 consecutive 4x weeks", computeWeekly(fourWeeks).consecutive4xWeeks, 4);
 const withGapWeek = fourWeeks.filter((k) => k < "2026-09-14" || k >= "2026-09-21");
 check("a weak week breaks the run", computeWeekly(withGapWeek).consecutive4xWeeks, 2);
 
-// ── Personal records ────────────────────────────────────────────────────────
+// Personal records
 check("first time is not a PR", countPrExercises([workout("2026-10-01", "Bench", "Chest", [{ reps: 5, weight: 60 }, { reps: 5, weight: 80 }])]), 0);
 check("heavier later set is a PR", countPrExercises([
   workout("2026-10-01", "Bench", "Chest", [{ reps: 5, weight: 60 }]),
@@ -146,13 +146,13 @@ check("same day is one session: the first day is the baseline", countPrExercises
   workout("2026-10-01", "Curl", "Arms", [{ reps: 10, weight: 12 }], "2026-10-01T09:00:00Z"),
 ]), 0);
 
-// ── Comeback ────────────────────────────────────────────────────────────────
+// Comeback
 check("no gap", computeComeback(days("2026-09-01", 10)), 0);
 check("13 rest days is not a break", computeComeback(["2026-09-01", "2026-09-15", "2026-09-16", "2026-09-17"]), 0);
 check("14 rest days then 3 sessions", computeComeback(["2026-09-01", "2026-09-16", "2026-09-17", "2026-09-19"]), 3);
 check("14 rest days then 2 sessions", computeComeback(["2026-09-01", "2026-09-16", "2026-09-18"]), 2);
 
-// ── Full workout metrics ────────────────────────────────────────────────────
+// Full workout metrics
 const sample = [
   workout("2026-10-03", "Bench", "Chest", [{ reps: 10, weight: 50 }, { reps: 8, weight: 60 }]), // Sat
   workout("2026-10-03", "Pull Up", "Back", [{ reps: 8, weight: 0 }]),                          // same day
@@ -171,7 +171,7 @@ check("weekend days", m.weekendDays, 2);
 check("max workouts in a day", m.maxWorkoutsInDay, 2);
 check("current = longest streak", [m.currentStreak, m.longestStreak], [6, 6]);
 
-// ── Muscle groups ───────────────────────────────────────────────────────────
+// Muscle groups
 check("muscle groups covered, fixed order, unmapped ignored",
   muscleGroupsCovered([
     workout("2026-10-01", "Squat", "Legs", []),
@@ -181,12 +181,12 @@ check("muscle groups covered, fixed order, unmapped ignored",
   ]),
   ["Chest", "Legs", "Core"]);
 
-// ── Weight metrics ──────────────────────────────────────────────────────────
+// Weight metrics
 check("entries and distinct days",
   computeWeightMetrics([{ date: "2026-10-01" }, { date: "2026-10-02" }, { date: new Date("2026-10-03T00:00:00Z") }]),
   { weightEntries: 3, weightDistinctDays: 3 });
 
-// ── Definitions ─────────────────────────────────────────────────────────────
+// Definitions
 const byKey = Object.fromEntries(
   evaluateDefinitions(ACHIEVEMENT_DEFINITIONS, { ...m, longestWeekStreak: 4, currentWeekStreak: 1 }).map((r) => [r.key, r]),
 );
@@ -197,7 +197,7 @@ check("double_session earned", byKey.double_session.earned, true);
 check("volume_1k earned (1,800 kg)", byKey.volume_1k.earned, true);
 check("volume_10k locked with progress", [byKey.volume_10k.earned, byKey.volume_10k.progress], [false, 1800]);
 
-// ── Service: append-only evaluation against an in-memory fake DB ────────────
+// Service: append-only evaluation against an in-memory fake DB
 test("badge service (fake database)", async (t) => {
   const state = { workouts: [], weights: [], achievements: [], customExercises: 0, plans: 0, generations: 0 };
   const fakeDb = {

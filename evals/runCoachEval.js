@@ -23,7 +23,7 @@ if (!process.env.GROQ_API_KEY) {
   process.exit(2);
 }
 
-// ── The in-memory database and the eval's plan ─────────────────────────────
+// The in-memory database and the eval's plan
 let storedPlan = null;
 let workouts = [];
 let tokens = 0;
@@ -50,7 +50,7 @@ stub("config/database.js", {
 });
 stub("services/achievementService.js", { evaluateAchievementsSafely: async () => [] });
 
-const { chatWithPlan } = require("../src/services/planningService");
+const { chatWithPlan } = require("../src/services/plans");
 const { validateAndSanitizePlan } = require("../src/utils/planValidator");
 const { newHealthCheck, HEALTH_CHECK_QUESTIONS } = require("../src/utils/healthCheck");
 const CASES = require("./coachCases");

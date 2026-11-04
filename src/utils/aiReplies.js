@@ -57,7 +57,6 @@ const firstWeekReply = z.object({
     .max(7),
 });
 
-/** An exercise swap. */
 const substituteReply = z.object({
   substituteExerciseId: z.string().max(60),
   reason: z.string().max(1000).optional(),

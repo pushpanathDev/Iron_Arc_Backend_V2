@@ -78,8 +78,9 @@ function progressionNoteFor(exerciseId, reps) {
  * exercise outside them (or unknown) is replaced by the closest one inside.
  * `fromWeek`: weeks before it are past, so "go easy on" leaves them as they
  * were (they match what was logged); equipment and limits still apply.
+ * `onSwap({ week, from, to })` hears of each known exercise that was replaced.
  */
-function validateAndSanitizePlan(rawPlan, equipmentTags = equipmentTagsFor(null), { avoid = [], fromWeek = 1 } = {}) {
+function validateAndSanitizePlan(rawPlan, equipmentTags = equipmentTagsFor(null), { avoid = [], fromWeek = 1, onSwap } = {}) {
   if (!rawPlan || !rawPlan.weeks || !Array.isArray(rawPlan.weeks)) {
     throw new Error("INVALID_PLAN_STRUCTURE");
   }
@@ -92,9 +93,10 @@ function validateAndSanitizePlan(rawPlan, equipmentTags = equipmentTagsFor(null)
     ...rawPlan,
     planExplanation: aiText(rawPlan.planExplanation, 400) || "AI-generated fitness plan.",
     weeks: rawPlan.weeks.map((week, weekIdx) => {
-      const weekAvoid = (week.week || weekIdx + 1) < fromWeek ? [] : avoid;
+      const weekNumber = week.week || weekIdx + 1;
+      const weekAvoid = weekNumber < fromWeek ? [] : avoid;
       return {
-        week: week.week || weekIdx + 1,
+        week: weekNumber,
         isDeloadWeek: week.isDeloadWeek || false,
         days: (week.days || []).map((day) => {
           // Rest days pass through, with their note cleaned
@@ -121,7 +123,10 @@ function validateAndSanitizePlan(rawPlan, equipmentTags = equipmentTagsFor(null)
                 const allowed = isAllowedExercise(ex.exerciseId, equipmentTags, weekAvoid);
                 const muscles = isValidExerciseId(ex.exerciseId) ? EXERCISE_DB[ex.exerciseId].muscles : targetMuscles;
                 const exerciseId = allowed ? ex.exerciseId : findSimilarExercise(muscles, equipmentTags, taken, { avoid: weekAvoid, order: isValidExerciseId(ex.exerciseId) ? EXERCISE_DB[ex.exerciseId].order : undefined });
-                if (!allowed) taken.push(exerciseId);
+                if (!allowed) {
+                  taken.push(exerciseId);
+                  if (isValidExerciseId(ex.exerciseId)) onSwap?.({ week: weekNumber, from: ex.exerciseId, to: exerciseId });
+                }
 
                 const reps = normalizeReps(ex.reps ?? "8-12");
                 const weight = Number(ex.targetWeight_kg);
@@ -166,13 +171,10 @@ function weekProblems(days, { safeMode = false, before = null } = {}) {
   return problems;
 }
 
-/* ─────────────────────────────────────────────────────────────
-   Safe mode (a "yes" in the health check, see utils/healthCheck.js)
-───────────────────────────────────────────────────────────── */
+// Safe mode (a "yes" in the health check, see utils/healthCheck.js)
 /** Tighter than LIMITS for what the AI writes in Safe mode: no heavy low-rep or to-failure sets, small steps up. */
 const SAFE_LIMITS = { maxSets: 4, minRestSeconds: 60, minReps: 8, weeklySetsGrowth: 0.1 };
 
-/** All sets in a week's training days. */
 function weeklySets(days) {
   return (days ?? []).reduce((sum, d) => sum + (d.exercises ?? []).reduce((n, ex) => n + (Number(ex.sets) || 0), 0), 0);
 }

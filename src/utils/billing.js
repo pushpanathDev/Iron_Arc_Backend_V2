@@ -160,7 +160,6 @@ module.exports = {
   PROVIDER,
   TRIAL_DAYS,
   FREE_PLANS,
-  FREE_PLAN_DAYS,
   proGateOn,
   addMonths,
   isPro,

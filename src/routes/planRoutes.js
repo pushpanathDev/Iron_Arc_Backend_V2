@@ -3,7 +3,7 @@ const { verifyFirebaseToken, requireEmailVerified } = require("../middleware/aut
 const { planGenerationLimiter, planChatLimiter } = require("../middleware/rateLimiter");
 const { requireCoachAccess } = require("../middleware/coachAccess");
 const { validate, todayFrom, substituteSchema, renamePlanSchema, planChatSchema, planGenerateSchema, coachReportSchema, coachFeedbackSchema } = require("../middleware/validation");
-const planningService = require("../services/planningService");
+const planService = require("../services/plans");
 const { reportCoachMessage, rateCoachMessage } = require("../services/aiReportService");
 
 // Routes that call the AI also need requireCoachAccess: adults who did the health check, with
@@ -13,60 +13,60 @@ router.use(verifyFirebaseToken);
 
 // Every plan, newest first, without the plan itself (the list stays small).
 router.get("/", async (req, res) => {
-  const plans = await planningService.listPlans(req.user.dbUser.id);
+  const plans = await planService.listPlans(req.user.dbUser.id);
   res.json({ success: true, data: plans });
 });
 
 // A new AI plan from the profile and the plan form (each choice from a fixed list); it becomes the active plan.
 router.post("/generate", requireEmailVerified, requireCoachAccess("newPlan"), validate(planGenerateSchema), planGenerationLimiter, async (req, res) => {
-  const { plan, newlyUnlocked } = await planningService.generatePlan(req.user.dbUser, req.body.criteria, req.body.today, { freePlan: req.coach.freePlan });
+  const { plan, newlyUnlocked } = await planService.generatePlan(req.user.dbUser, req.body.criteria, req.body.today, { freePlan: req.coach.freePlan });
   res.status(201).json({ success: true, data: plan, newlyUnlocked });
 });
 
 router.get("/:id", async (req, res) => {
-  const plan = await planningService.getPlan(req.user.dbUser.id, req.params.id);
+  const plan = await planService.getPlan(req.user.dbUser.id, req.params.id);
   res.json({ success: true, data: plan });
 });
 
 // "Next week": moves the plan on a week (from the Monday after this one), tuned to the last 7 days of training.
 router.post("/:id/recalibrate", requireEmailVerified, requireCoachAccess("planWeeks"), planGenerationLimiter, async (req, res) => {
-  const plan = await planningService.recalibratePlan(req.user.dbUser, req.params.id, todayFrom(req.body));
+  const plan = await planService.recalibratePlan(req.user.dbUser, req.params.id, todayFrom(req.body));
   res.json({ success: true, data: plan });
 });
 
 // Swap one exercise for another the AI picks (same muscles, the user's equipment).
 router.post("/:id/substitute", requireEmailVerified, requireCoachAccess("planWeeks"), validate(substituteSchema), async (req, res) => {
   const { exerciseId, reason } = req.body;
-  const plan = await planningService.substituteExercise(req.user.dbUser, req.params.id, exerciseId, reason);
+  const plan = await planService.substituteExercise(req.user.dbUser, req.params.id, exerciseId, reason);
   res.json({ success: true, data: plan });
 });
 
 // Safe mode turned on after this plan was made: bring it within Safe mode's limits (no AI).
 router.post("/:id/safer", requireEmailVerified, async (req, res) => {
-  const result = await planningService.makePlanSafer(req.user.dbUser, req.params.id);
+  const result = await planService.makePlanSafer(req.user.dbUser, req.params.id);
   res.json({ success: true, data: result });
 });
 
 router.patch("/:id/name", requireEmailVerified, validate(renamePlanSchema), async (req, res) => {
-  const plan = await planningService.renamePlan(req.user.dbUser.id, req.params.id, req.body.name);
+  const plan = await planService.renamePlan(req.user.dbUser.id, req.params.id, req.body.name);
   res.json({ success: true, data: plan });
 });
 
 // Make this the active plan; the others become inactive.
 router.patch("/:id/activate", requireEmailVerified, async (req, res) => {
-  const plan = await planningService.activatePlan(req.user.dbUser.id, req.params.id);
+  const plan = await planService.activatePlan(req.user.dbUser.id, req.params.id);
   res.json({ success: true, data: plan });
 });
 
 // If the deleted plan was active, the newest remaining plan takes over.
 router.delete("/:id", requireEmailVerified, async (req, res) => {
-  await planningService.deletePlan(req.user.dbUser.id, req.params.id);
+  await planService.deletePlan(req.user.dbUser.id, req.params.id);
   res.json({ success: true, message: "Plan deleted." });
 });
 
 // A message to the plan coach: an answer, and maybe a suggested change (a proposal) to apply or dismiss.
 router.post("/:id/chat", requireEmailVerified, requireCoachAccess("chat"), validate(planChatSchema), planChatLimiter, async (req, res) => {
-  const result = await planningService.chatWithPlan(req.user.dbUser, req.params.id, req.body.message, req.body.today);
+  const result = await planService.chatWithPlan(req.user.dbUser, req.params.id, req.body.message, req.body.today);
   res.json({ success: true, data: result });
 });
 
@@ -84,12 +84,12 @@ router.post("/:id/chat/feedback", requireEmailVerified, validate(coachFeedbackSc
 
 // The user's answer to a coach proposal. Apply re-checks it against the plan as it is now.
 router.post("/:id/proposals/:proposalId/apply", requireEmailVerified, async (req, res) => {
-  const result = await planningService.applyProposal(req.user.dbUser, req.params.id, req.params.proposalId);
+  const result = await planService.applyProposal(req.user.dbUser, req.params.id, req.params.proposalId);
   res.json({ success: true, data: result });
 });
 
 router.post("/:id/proposals/:proposalId/dismiss", requireEmailVerified, async (req, res) => {
-  const result = await planningService.dismissProposal(req.user.dbUser, req.params.id, req.params.proposalId);
+  const result = await planService.dismissProposal(req.user.dbUser, req.params.id, req.params.proposalId);
   res.json({ success: true, data: result });
 });
 

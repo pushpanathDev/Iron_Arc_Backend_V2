@@ -99,7 +99,7 @@ test("older profiles (no weekdays) get their weekly goal, spread over the week",
   assert.deepEqual(planSettings(old).schedule.map((s) => s.day), ["monday", "tuesday", "thursday", "friday"]);
 });
 
-// ── Go easy on → Other ─────────────────────────────────────────────────────
+// Go easy on → Other
 test("'Other' is saved cleaned and capped; empty or null clears it", async () => {
   assert.ok(accepted({ avoidNote: "old ankle sprain" }));
   assert.ok(accepted({ avoidNote: null }));

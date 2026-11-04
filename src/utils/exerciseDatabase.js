@@ -10,6 +10,8 @@
  *
  * order: where it goes in a session. 1 heavy compound lifts, 2 secondary
  * compounds, 3 isolation, 4 core and conditioning.
+ * muscles: what it trains, the main one first; swaps match on these. Cardio
+ * work lists "cardio" first, so its stand-in is cardio too.
  * equipment: what it needs (see EQUIPMENT_TAGS); none means bodyweight.
  * stress: joints it loads hard (knees, lower_back, shoulders, wrists). A user
  * who goes easy on one of them never gets these: they're left out of the
@@ -18,7 +20,7 @@
  * The ids of exercises already in plans never change (ids are stored in plans).
  */
 const EXERCISE_DB = {
-  // ── Chest ───────────────────────────────────────────────────────────
+  // Chest
   bench_press:          { name: "Barbell Bench Press",         order: 1, muscles: ["chest", "triceps", "shoulders"], equipment: ["barbell"] },
   incline_press:        { name: "Incline Barbell Bench Press", order: 1, muscles: ["chest", "shoulders"],            equipment: ["barbell"] },
   close_grip_bench:     { name: "Close-Grip Bench Press",      order: 2, muscles: ["triceps", "chest"],              equipment: ["barbell"], stress: ["wrists"] },
@@ -35,7 +37,7 @@ const EXERCISE_DB = {
   diamond_push_up:      { name: "Diamond Push Ups",            order: 3, muscles: ["triceps", "chest"],              equipment: [], stress: ["wrists"] },
   chest_dip:            { name: "Dips (Chest)",                order: 2, muscles: ["chest", "triceps"],              equipment: [], stress: ["shoulders"] },
 
-  // ── Shoulders ───────────────────────────────────────────────────────
+  // Shoulders
   overhead_press:       { name: "Barbell Overhead Press",      order: 1, muscles: ["shoulders", "triceps"],          equipment: ["barbell"], stress: ["shoulders"] },
   db_shoulder_press:    { name: "Dumbbell Shoulder Press",     order: 2, muscles: ["shoulders", "triceps"],          equipment: ["dumbbells"] },
   arnold_press:         { name: "Arnold Press",                order: 2, muscles: ["shoulders"],                     equipment: ["dumbbells"], stress: ["shoulders"] },
@@ -51,7 +53,7 @@ const EXERCISE_DB = {
   db_shrug:             { name: "Dumbbell Shrugs",             order: 3, muscles: ["back"],                          equipment: ["dumbbells"] },
   barbell_shrug:        { name: "Barbell Shrugs",              order: 3, muscles: ["back"],                          equipment: ["barbell"] },
 
-  // ── Back ────────────────────────────────────────────────────────────
+  // Back
   pull_up:              { name: "Pull Ups",                    order: 1, muscles: ["back", "biceps"],                equipment: ["pull_up_bar"] },
   chin_up:              { name: "Chin Ups",                    order: 1, muscles: ["back", "biceps"],                equipment: ["pull_up_bar"] },
   barbell_row:          { name: "Barbell Row",                 order: 1, muscles: ["back", "biceps"],                equipment: ["barbell"], stress: ["lower_back"] },
@@ -66,7 +68,7 @@ const EXERCISE_DB = {
   straight_arm_pulldown: { name: "Straight Arm Pulldown",      order: 3, muscles: ["back"],                          equipment: ["cables"] },
   hyperextension:       { name: "Hyperextension",              order: 3, muscles: ["back", "glutes", "hamstrings"],  equipment: ["machines"], stress: ["lower_back"] },
 
-  // ── Legs ────────────────────────────────────────────────────────────
+  // Legs
   squat:                { name: "Barbell Back Squat",          order: 1, muscles: ["quads", "glutes", "hamstrings"], equipment: ["barbell"], stress: ["knees", "lower_back"] },
   front_squat:          { name: "Front Squat",                 order: 1, muscles: ["quads", "glutes"],               equipment: ["barbell"], stress: ["knees", "wrists"] },
   deadlift:             { name: "Deadlift",                    order: 1, muscles: ["hamstrings", "glutes", "back"],  equipment: ["barbell"], stress: ["lower_back"] },
@@ -89,7 +91,7 @@ const EXERCISE_DB = {
   seated_calf_raise:    { name: "Seated Calf Raise",           order: 3, muscles: ["calves"],                        equipment: ["machines"] },
   wall_sit:             { name: "Wall Sit",                    order: 4, muscles: ["quads"],                         equipment: [], stress: ["knees"] },
 
-  // ── Arms ────────────────────────────────────────────────────────────
+  // Arms
   bicep_curl:           { name: "Barbell Curl",                order: 3, muscles: ["biceps"],                        equipment: ["barbell"], stress: ["wrists"] },
   ez_bar_curl:          { name: "EZ Bar Curl",                 order: 3, muscles: ["biceps"],                        equipment: ["barbell"] },
   preacher_curl:        { name: "Preacher Curl",               order: 3, muscles: ["biceps"],                        equipment: ["barbell"] },
@@ -105,7 +107,7 @@ const EXERCISE_DB = {
   tricep_pushdown:      { name: "Tricep Pushdown",             order: 3, muscles: ["triceps"],                       equipment: ["cables"] },
   rope_pushdown:        { name: "Rope Pushdown",               order: 3, muscles: ["triceps"],                       equipment: ["cables"] },
 
-  // ── Core ────────────────────────────────────────────────────────────
+  // Core
   plank:                { name: "Plank",                       order: 4, muscles: ["core"],                          equipment: [] },
   side_plank:           { name: "Side Plank",                  order: 4, muscles: ["core"],                          equipment: [] },
   dead_bug:             { name: "Dead Bug",                    order: 4, muscles: ["core"],                          equipment: [] },
@@ -118,14 +120,14 @@ const EXERCISE_DB = {
   cable_crunch:         { name: "Cable Crunch",                order: 4, muscles: ["core"],                          equipment: ["cables"] },
   russian_twist:        { name: "Russian Twist",               order: 4, muscles: ["core"],                          equipment: [] },
 
-  // ── Conditioning ────────────────────────────────────────────────────
+  // Conditioning
   farmers_walk:         { name: "Farmer's Walk",               order: 4, muscles: ["full_body"],                     equipment: ["dumbbells"] },
-  rowing_machine:       { name: "Rowing Machine",              order: 4, muscles: ["full_body"],                     equipment: ["machines"] },
-  stationary_bike:      { name: "Stationary Bike",             order: 4, muscles: [],                                equipment: ["machines"] },
-  jump_rope:            { name: "Jump Rope",                   order: 4, muscles: [],                                equipment: ["jump_rope"], stress: ["knees"] },
-  jumping_jacks:        { name: "Jumping Jacks",               order: 4, muscles: ["full_body"],                     equipment: [], stress: ["knees"] },
-  burpee:               { name: "Burpees",                     order: 4, muscles: ["full_body"],                     equipment: [], stress: ["knees", "wrists"] },
-  mountain_climber:     { name: "Mountain Climbers",           order: 4, muscles: ["core", "full_body"],             equipment: [], stress: ["wrists"] },
+  rowing_machine:       { name: "Rowing Machine",              order: 4, muscles: ["cardio", "full_body"],           equipment: ["machines"] },
+  stationary_bike:      { name: "Stationary Bike",             order: 4, muscles: ["cardio"],                        equipment: ["machines"] },
+  jump_rope:            { name: "Jump Rope",                   order: 4, muscles: ["cardio"],                        equipment: ["jump_rope"], stress: ["knees"] },
+  jumping_jacks:        { name: "Jumping Jacks",               order: 4, muscles: ["cardio", "full_body"],           equipment: [], stress: ["knees"] },
+  burpee:               { name: "Burpees",                     order: 4, muscles: ["cardio", "full_body"],           equipment: [], stress: ["knees", "wrists"] },
+  mountain_climber:     { name: "Mountain Climbers",           order: 4, muscles: ["cardio", "core"],                equipment: [], stress: ["wrists"] },
 };
 
 /** The joints "Go easy on" can protect (the profile's avoidAreas). */
@@ -153,24 +155,17 @@ function ruledOutIn(days, avoid) {
  * When the validator swapped exercises the AI chose that "go easy on" rules
  * out, the line that says so ("To go easy on your knees, this uses Goblet
  * Squat instead of Barbell Back Squat."), so the coach's message never names
- * an exercise the suggestion doesn't have. `aiDays` are the AI's short-key
- * days, `days` the checked week. Null when nothing was swapped.
+ * an exercise the suggestion doesn't have. `swaps` are the validator's
+ * ({ from, to }); ones made for equipment are left out. Null when none is left.
  */
-function goEasySwapNote(aiDays, days, avoid) {
-  if (avoid.length === 0 || !Array.isArray(aiDays)) return null;
+function goEasySwapNote(swaps, avoid) {
   const pairs = new Map();
   const areas = new Set();
-  for (const aiDay of aiDays) {
-    const asked = (aiDay?.x ?? []).map((x) => x?.id);
-    const out = asked.filter((id) => stressedAreas(id, avoid).length > 0);
-    if (out.length === 0) continue;
-    const day = (days ?? []).find((d) => d.day === aiDay.d);
-    const added = (day?.exercises ?? []).map((ex) => ex.exerciseId).filter((id) => !asked.includes(id));
-    out.forEach((id, i) => {
-      if (!added[i]) return;
-      pairs.set(`${added[i]}<${id}`, `${EXERCISE_DB[added[i]].name} instead of ${EXERCISE_DB[id].name}`);
-      stressedAreas(id, avoid).forEach((area) => areas.add(AREA_NAMES[area]));
-    });
+  for (const { from, to } of swaps ?? []) {
+    const stressed = stressedAreas(from, avoid);
+    if (stressed.length === 0) continue;
+    pairs.set(`${to}<${from}`, `${EXERCISE_DB[to].name} instead of ${EXERCISE_DB[from].name}`);
+    stressed.forEach((area) => areas.add(AREA_NAMES[area]));
   }
   if (pairs.size === 0) return null;
   const list = (items) => (items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}` : items[0]);
