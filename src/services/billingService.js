@@ -28,10 +28,13 @@ const { trialEndingEmail, cancelledEmail, renewedEmail } = require("../emails/pr
  * subscriptions or record a renewal twice.
  */
 
+/** Locks the user's row until the transaction ends, without changing it (so reading billing writes nothing). */
+const lockUserRow = (tx, userId) => tx.$queryRaw`SELECT 1 FROM "users" WHERE "id" = ${userId} FOR UPDATE`;
+
 /** Runs `work(tx)` with the user's row locked until the transaction ends. */
 function withUserLocked(userId, work) {
   return prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: userId }, data: { updatedAt: new Date() } });
+    await lockUserRow(tx, userId);
     return work(tx);
   });
 }
@@ -259,7 +262,7 @@ const changePlan = (user, plan, now = new Date()) =>
  * generated at once can't both take it.
  */
 async function claimFreePlan(tx, userId, now = new Date()) {
-  await tx.user.update({ where: { id: userId }, data: { updatedAt: new Date() } });
+  await lockUserRow(tx, userId);
   if ((await plansMadeInWindow(tx, userId, now)).length >= FREE_PLANS) throw planLimitError();
 }
 
