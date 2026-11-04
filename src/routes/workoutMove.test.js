@@ -7,7 +7,7 @@ const assert = require("node:assert/strict");
 const { stub } = require("../testing/stub");
 const express = require("express");
 
-// ── Fakes ─────────────────────────────────────────────────────────────────
+// Fakes
 let rows = []; // workouts in the "database"
 let evaluations = 0;
 
@@ -49,7 +49,7 @@ stub("services/achievementService.js", {
   },
 });
 
-// ── Server ────────────────────────────────────────────────────────────────
+// Server
 const app = express();
 app.use(express.json({ limit: "50kb" }));
 app.use("/api/workouts", require("./workoutRoutes"));

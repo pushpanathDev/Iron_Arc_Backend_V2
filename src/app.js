@@ -26,10 +26,10 @@ const app = express();
 // Render terminates TLS at one proxy hop; trust it so req.ip is the client IP.
 app.set("trust proxy", 1);
 
-// ── Security Headers ───────────────────────────────────────────────────
+// Security Headers
 app.use(helmet());
 
-// ── CORS ───────────────────────────────────────────────────────────────
+// CORS
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",")
   : ["*"];
@@ -44,10 +44,10 @@ app.use(
   })
 );
 
-// ── Body Parsing ───────────────────────────────────────────────────────
+// Body Parsing
 app.use(express.json({ limit: "50kb" }));
 
-// ── Static files ─────────────────────────────────────────────────────
+// Static files
 // Images emails link to (the logo). Other sites may show them, so they opt out of
 // helmet's same-origin rule; cached for a week.
 app.use(
@@ -58,7 +58,7 @@ app.use(
   }),
 );
 
-// ── Routes ─────────────────────────────────────────────────────────────
+// Routes
 app.use("/api/health", healthRoutes);
 app.use("/api/app", appRoutes);
 app.use("/api/user", userRoutes);
@@ -70,15 +70,15 @@ app.use("/api/plans", planRoutes);
 app.use("/api/billing", billingRoutes);
 app.use("/api/admin", adminLimiter, adminRoutes);
 
-// ── 404 Catch-All ──────────────────────────────────────────────────────
+// 404 Catch-All
 app.use((req, res) => {
   res.status(404).json({ success: false, message: "Route not found" });
 });
 
-// ── Global Error Handler ───────────────────────────────────────────────
+// Global Error Handler
 app.use(errorHandler);
 
-// ── Start Server ───────────────────────────────────────────────────────
+// Start Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(
@@ -86,7 +86,7 @@ app.listen(PORT, () => {
   );
 });
 
-// ── Graceful Shutdown ──────────────────────────────────────────────────
+// Graceful Shutdown
 const { prisma } = require("./config/database");
 
 process.on("SIGTERM", async () => {

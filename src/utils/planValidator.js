@@ -171,13 +171,10 @@ function weekProblems(days, { safeMode = false, before = null } = {}) {
   return problems;
 }
 
-/* ─────────────────────────────────────────────────────────────
-   Safe mode (a "yes" in the health check, see utils/healthCheck.js)
-───────────────────────────────────────────────────────────── */
+// Safe mode (a "yes" in the health check, see utils/healthCheck.js)
 /** Tighter than LIMITS for what the AI writes in Safe mode: no heavy low-rep or to-failure sets, small steps up. */
 const SAFE_LIMITS = { maxSets: 4, minRestSeconds: 60, minReps: 8, weeklySetsGrowth: 0.1 };
 
-/** All sets in a week's training days. */
 function weeklySets(days) {
   return (days ?? []).reduce((sum, d) => sum + (d.exercises ?? []).reduce((n, ex) => n + (Number(ex.sets) || 0), 0), 0);
 }

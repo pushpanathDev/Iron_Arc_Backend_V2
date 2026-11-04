@@ -23,7 +23,7 @@ if (!process.env.GROQ_API_KEY) {
   process.exit(2);
 }
 
-// ── The in-memory database and the eval's plan ─────────────────────────────
+// The in-memory database and the eval's plan
 let storedPlan = null;
 let workouts = [];
 let tokens = 0;

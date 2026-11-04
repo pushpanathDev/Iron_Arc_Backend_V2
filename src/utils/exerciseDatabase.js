@@ -20,7 +20,7 @@
  * The ids of exercises already in plans never change (ids are stored in plans).
  */
 const EXERCISE_DB = {
-  // ── Chest ───────────────────────────────────────────────────────────
+  // Chest
   bench_press:          { name: "Barbell Bench Press",         order: 1, muscles: ["chest", "triceps", "shoulders"], equipment: ["barbell"] },
   incline_press:        { name: "Incline Barbell Bench Press", order: 1, muscles: ["chest", "shoulders"],            equipment: ["barbell"] },
   close_grip_bench:     { name: "Close-Grip Bench Press",      order: 2, muscles: ["triceps", "chest"],              equipment: ["barbell"], stress: ["wrists"] },
@@ -37,7 +37,7 @@ const EXERCISE_DB = {
   diamond_push_up:      { name: "Diamond Push Ups",            order: 3, muscles: ["triceps", "chest"],              equipment: [], stress: ["wrists"] },
   chest_dip:            { name: "Dips (Chest)",                order: 2, muscles: ["chest", "triceps"],              equipment: [], stress: ["shoulders"] },
 
-  // ── Shoulders ───────────────────────────────────────────────────────
+  // Shoulders
   overhead_press:       { name: "Barbell Overhead Press",      order: 1, muscles: ["shoulders", "triceps"],          equipment: ["barbell"], stress: ["shoulders"] },
   db_shoulder_press:    { name: "Dumbbell Shoulder Press",     order: 2, muscles: ["shoulders", "triceps"],          equipment: ["dumbbells"] },
   arnold_press:         { name: "Arnold Press",                order: 2, muscles: ["shoulders"],                     equipment: ["dumbbells"], stress: ["shoulders"] },
@@ -53,7 +53,7 @@ const EXERCISE_DB = {
   db_shrug:             { name: "Dumbbell Shrugs",             order: 3, muscles: ["back"],                          equipment: ["dumbbells"] },
   barbell_shrug:        { name: "Barbell Shrugs",              order: 3, muscles: ["back"],                          equipment: ["barbell"] },
 
-  // ── Back ────────────────────────────────────────────────────────────
+  // Back
   pull_up:              { name: "Pull Ups",                    order: 1, muscles: ["back", "biceps"],                equipment: ["pull_up_bar"] },
   chin_up:              { name: "Chin Ups",                    order: 1, muscles: ["back", "biceps"],                equipment: ["pull_up_bar"] },
   barbell_row:          { name: "Barbell Row",                 order: 1, muscles: ["back", "biceps"],                equipment: ["barbell"], stress: ["lower_back"] },
@@ -68,7 +68,7 @@ const EXERCISE_DB = {
   straight_arm_pulldown: { name: "Straight Arm Pulldown",      order: 3, muscles: ["back"],                          equipment: ["cables"] },
   hyperextension:       { name: "Hyperextension",              order: 3, muscles: ["back", "glutes", "hamstrings"],  equipment: ["machines"], stress: ["lower_back"] },
 
-  // ── Legs ────────────────────────────────────────────────────────────
+  // Legs
   squat:                { name: "Barbell Back Squat",          order: 1, muscles: ["quads", "glutes", "hamstrings"], equipment: ["barbell"], stress: ["knees", "lower_back"] },
   front_squat:          { name: "Front Squat",                 order: 1, muscles: ["quads", "glutes"],               equipment: ["barbell"], stress: ["knees", "wrists"] },
   deadlift:             { name: "Deadlift",                    order: 1, muscles: ["hamstrings", "glutes", "back"],  equipment: ["barbell"], stress: ["lower_back"] },
@@ -91,7 +91,7 @@ const EXERCISE_DB = {
   seated_calf_raise:    { name: "Seated Calf Raise",           order: 3, muscles: ["calves"],                        equipment: ["machines"] },
   wall_sit:             { name: "Wall Sit",                    order: 4, muscles: ["quads"],                         equipment: [], stress: ["knees"] },
 
-  // ── Arms ────────────────────────────────────────────────────────────
+  // Arms
   bicep_curl:           { name: "Barbell Curl",                order: 3, muscles: ["biceps"],                        equipment: ["barbell"], stress: ["wrists"] },
   ez_bar_curl:          { name: "EZ Bar Curl",                 order: 3, muscles: ["biceps"],                        equipment: ["barbell"] },
   preacher_curl:        { name: "Preacher Curl",               order: 3, muscles: ["biceps"],                        equipment: ["barbell"] },
@@ -107,7 +107,7 @@ const EXERCISE_DB = {
   tricep_pushdown:      { name: "Tricep Pushdown",             order: 3, muscles: ["triceps"],                       equipment: ["cables"] },
   rope_pushdown:        { name: "Rope Pushdown",               order: 3, muscles: ["triceps"],                       equipment: ["cables"] },
 
-  // ── Core ────────────────────────────────────────────────────────────
+  // Core
   plank:                { name: "Plank",                       order: 4, muscles: ["core"],                          equipment: [] },
   side_plank:           { name: "Side Plank",                  order: 4, muscles: ["core"],                          equipment: [] },
   dead_bug:             { name: "Dead Bug",                    order: 4, muscles: ["core"],                          equipment: [] },
@@ -120,7 +120,7 @@ const EXERCISE_DB = {
   cable_crunch:         { name: "Cable Crunch",                order: 4, muscles: ["core"],                          equipment: ["cables"] },
   russian_twist:        { name: "Russian Twist",               order: 4, muscles: ["core"],                          equipment: [] },
 
-  // ── Conditioning ────────────────────────────────────────────────────
+  // Conditioning
   farmers_walk:         { name: "Farmer's Walk",               order: 4, muscles: ["full_body"],                     equipment: ["dumbbells"] },
   rowing_machine:       { name: "Rowing Machine",              order: 4, muscles: ["cardio", "full_body"],           equipment: ["machines"] },
   stationary_bike:      { name: "Stationary Bike",             order: 4, muscles: ["cardio"],                        equipment: ["machines"] },

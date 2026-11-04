@@ -101,7 +101,6 @@ const testNote = (text) => `<p style="margin:10px 0 0;padding:10px 12px;border-r
  * A whole email page. `blocks` are HTML rows' contents (each its own padded
  * row); `kicker` the small line above the headline; `title` may hold <br>.
  */
-/** The footer under every Pro email. */
 const PRO_FOOTER = "You're getting this because you have Iron Arc Pro in the app. Manage or cancel any time in Profile → Subscription. Questions? Just reply to this email.";
 
 function page({ preheader, kicker, title, blocks, signOff = "Lift heavy, recover well.", footer = PRO_FOOTER }) {

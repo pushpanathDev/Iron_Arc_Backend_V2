@@ -208,7 +208,7 @@ test("the coach sees the last 7 days of the log", async () => {
   assert.match(prompt, /Never say a session was done unless it's logged/);
 });
 
-// ── Plan weeks are calendar weeks ─────────────────────────────────────────
+// Plan weeks are calendar weeks
 test("next week starts on the Monday after this one, not before", async () => {
   delete process.env.ALLOW_EARLY_NEXT_WEEK;
   try {
@@ -250,7 +250,7 @@ test("right after moving on, the coach sees the new week and last week by their 
   assert.match(prompt, /a question about "my week" is about LAST WEEK/);
 });
 
-// ── Next week always carries the progression ──────────────────────────────
+// Next week always carries the progression
 const sixDayWeek = ["monday", "tuesday", "wednesday"].map((day) => ({ day, exercises: [ex("bench_press", "Barbell Bench Press")] }));
 const shortWeek = (days) => days.map(([d, id]) => (id ? { d, m: ["chest"], min: 90, x: [{ id, n: id, s: 5, r: "8-10", rest: 90 }] } : { d, t: "rest" }));
 
@@ -276,7 +276,7 @@ test("next week uses the AI's week when it sends one", async () => {
   assert.match(updated.planData._chatHistory.at(-1).content, /One more set on bench/);
 });
 
-// ── New training days in the profile ──────────────────────────────────────
+// New training days in the profile
 test("training days changed in the profile: next week moves the sessions to them", async () => {
   aiReply = { planExplanation: "x", days: sixDayWeek };
   await generatePlan(user, { splitPreference: "push_pull_legs" });
@@ -301,7 +301,7 @@ test("a split change (fewer days than the split needs) gets fresh sessions from 
   assert.match(prompts.find((p) => p.includes("- Monday: Full body")) ?? "", /- Thursday: Full body/, "full body on 2 days, written by the AI");
 });
 
-// ── The coach's day changes reach the profile ─────────────────────────────
+// The coach's day changes reach the profile
 test("the coach moving the active plan to 3 days updates the profile's training days", async () => {
   aiReply = { planExplanation: "x", days: sixDayWeek };
   await generatePlan(user, { splitPreference: "push_pull_legs" });
@@ -339,7 +339,7 @@ test("test mode: starting next week early makes it this week, and the week befor
   assert.deepEqual(storedPlan.planData.lastWeek, { number: 2, startsOn: "2026-10-05" });
 });
 
-// ── The coach can't be talked into an unsafe week ──────────────────────────
+// The coach can't be talked into an unsafe week
 test("a coach change with no rest day is refused, and the plan stays as it was", async () => {
   aiReply = { planExplanation: "x", days: sixDayWeek };
   await generatePlan(user, { splitPreference: "push_pull_legs" });
@@ -377,7 +377,7 @@ test("a coach reply without a message is a 503, not a silent change", async () =
   await assert.rejects(chatWithPlan(user, "plan-1", "hi", "2026-10-16"), (e) => e.status === 503);
 });
 
-// ── Coach changes are suggestions until the user applies them ─────────────
+// Coach changes are suggestions until the user applies them
 const threeDayWeek = shortWeek([["monday", "bench_press"], ["tuesday"], ["wednesday", "pull_up"], ["thursday"], ["friday", "squat"], ["saturday"], ["sunday"]]);
 async function planWithProposal() {
   aiReply = { planExplanation: "x", days: sixDayWeek };
@@ -455,7 +455,7 @@ test("a save that loses a race is a 409, not an overwrite", async () => {
   await assert.rejects(chat, (e) => e.status === 409);
 });
 
-// ── Daily AI budgets ───────────────────────────────────────────────────────
+// Daily AI budgets
 const withEnv = async (vars, fn) => {
   const before = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
   Object.assign(process.env, vars);
@@ -498,7 +498,7 @@ test("everyone's daily budget used up: the coach rests (503) instead of failing 
   });
 });
 
-// ── Reporting a coach message ──────────────────────────────────────────────
+// Reporting a coach message
 test("a coach message can be reported once, with a copy kept; the chat marks it", async () => {
   aiReply = { planExplanation: "x", days: sixDayWeek };
   await generatePlan(user, { splitPreference: "push_pull_legs" });
@@ -531,7 +531,7 @@ test("only the coach's own messages in the chat can be reported", async () => {
   assert.equal(reports.length, 0);
 });
 
-// ── Safety: danger signs, scope, Safe mode ─────────────────────────────────
+// Safety: danger signs, scope, Safe mode
 const { newHealthCheck } = require("../utils/healthCheck");
 const { NUTRITION_REPLY } = require("../utils/safetyTriage");
 const safeUser = { ...user, age: 40, healthCheck: newHealthCheck({ heart: false, joints: true }) };
@@ -603,7 +603,7 @@ test("Safe mode: a lighter change is still suggested, bounded", async () => {
   assert.ok(days.flatMap((d) => d.exercises ?? []).every((ex) => ex.sets <= 4));
 });
 
-// ── Feedback on coach replies, and a reply that leaks the instructions ─────
+// Feedback on coach replies, and a reply that leaks the instructions
 test("a thumbs up or down is kept once per reply, can change, and can be taken back", async () => {
   aiReply = { planExplanation: "x", days: sixDayWeek };
   await generatePlan(user, { splitPreference: "push_pull_legs" });

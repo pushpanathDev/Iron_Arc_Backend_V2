@@ -67,7 +67,7 @@ test("an exercise without a progression note gets one that fits its reps", () =>
   ]);
 });
 
-// ── The bigger catalogue and "Go easy on" ─────────────────────────────────
+// The bigger catalogue and "Go easy on"
 test("every exercise is well formed: a known order, muscles, equipment and stress areas", () => {
   const tags = new Set(equipmentTagsFor("full_gym"));
   for (const [id, ex] of Object.entries(EXERCISE_DB)) {
