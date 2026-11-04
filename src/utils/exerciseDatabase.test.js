@@ -137,9 +137,23 @@ test("the coach is told what an older plan has that go easy on now rules out, an
   assert.deepEqual(ruledOutIn(days, ["knees"]), ["Barbell Back Squat (knees)"]);
   assert.deepEqual(ruledOutIn(days, []), []);
 
-  const ai = [{ d: "tuesday", x: [{ id: "squat" }, { id: "lunge" }, { id: "leg_curl" }] }];
-  const checked = [{ day: "tuesday", exercises: [{ exerciseId: "leg_press" }, { exerciseId: "goblet_squat" }, { exerciseId: "leg_curl" }] }];
-  assert.equal(goEasySwapNote(ai, checked, ["knees"]), "To go easy on your knees, this uses Leg Press instead of Barbell Back Squat and Goblet Squat instead of Walking Lunges.");
-  assert.equal(goEasySwapNote([{ d: "tuesday", x: [{ id: "leg_curl" }] }], checked, ["knees"]), null, "nothing swapped");
-  assert.equal(goEasySwapNote(ai, checked, []), null);
+  const swaps = [
+    { week: 1, from: "squat", to: "leg_press" },
+    { week: 1, from: "lunge", to: "goblet_squat" },
+  ];
+  assert.equal(goEasySwapNote(swaps, ["knees"]), "To go easy on your knees, this uses Leg Press instead of Barbell Back Squat and Goblet Squat instead of Walking Lunges.");
+  assert.equal(goEasySwapNote([], ["knees"]), null, "nothing swapped");
+  assert.equal(goEasySwapNote(swaps, []), null);
+});
+
+test("the go easy on note names the real swap when another was for equipment", () => {
+  // Dumbbells only, going easy on knees: Leg Press goes for the equipment, the squat for the knees.
+  const swaps = [];
+  const day = { day: "tuesday", sessionType: "training", targetMuscles: ["quads"], exercises: [{ exerciseId: "leg_press" }, { exerciseId: "squat" }] };
+  const plan = validateAndSanitizePlan({ weeks: [{ week: 1, days: [day] }] }, equipmentTagsFor("dumbbells"), { avoid: ["knees"], onSwap: (swap) => swaps.push(swap) });
+  assert.equal(swaps.length, 2);
+  const forKnees = swaps.find((s) => s.from === "squat");
+  assert.ok(plan.weeks[0].days[0].exercises.some((ex) => ex.exerciseId === forKnees.to));
+  // Only the knee swap is named, with what really replaced the squat.
+  assert.equal(goEasySwapNote(swaps, ["knees"]), `To go easy on your knees, this uses ${EXERCISE_DB[forKnees.to].name} instead of Barbell Back Squat.`);
 });

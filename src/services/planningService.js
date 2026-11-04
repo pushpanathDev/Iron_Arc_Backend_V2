@@ -96,17 +96,20 @@ function workoutLine(w) {
 }
 
 /**
- * An AI change to one week, checked: the plan with it applied, or why not.
+ * An AI change to one week, checked: the plan with it applied and the
+ * exercises the validator swapped in that week, or why it can't be used.
  * The change must pass the validator's limits and the week rules (a rest day).
  * In Safe mode it's bounded further and may add only a little to the week.
  */
 function checkedWeekChange(planOnly, weekNumber, days, equipment, { safeMode = false, avoid = [], ...options } = {}) {
   try {
     const week = weekNumber || 1;
-    const validated = validateAndSanitizePlan(applyWeekChange(planOnly, weekNumber, days, options), equipment, { avoid, fromWeek: week });
+    const swaps = [];
+    const onSwap = (swap) => swap.week === week && swaps.push(swap);
+    const validated = validateAndSanitizePlan(applyWeekChange(planOnly, weekNumber, days, options), equipment, { avoid, fromWeek: week, onSwap });
     const plan = safeMode ? saferFrom(validated, week) : validated;
     const problems = weekProblems(plan.weeks?.[week - 1]?.days, { safeMode, before: planOnly.weeks?.[week - 1]?.days });
-    return problems.length > 0 ? { problems } : { plan };
+    return problems.length > 0 ? { problems } : { plan, swaps };
   } catch {
     return { problems: ["invalid week"] };
   }
@@ -279,24 +282,26 @@ async function recalibratePlan(user, planId, today = dateKey()) {
     deload: isDeloadWeek(next),
     exerciseIds: allowedExerciseIds(equipment, avoidAreasOf(user)),
   });
-  /** The AI's next week, checked, or null when it sent none or an unusable one. */
+  /** The AI's next week, checked ({ plan, swaps }), or null when it sent none or an unusable one. */
   const adjust = (reply) => {
     const days = changedDays(reply);
-    return days ? (checkedWeekChange(planOnly, next, days, equipment, { onlyThisWeek: true, safeMode, avoid: avoidAreasOf(user) }).plan ?? null) : null;
+    const checked = days ? checkedWeekChange(planOnly, next, days, equipment, { onlyThisWeek: true, safeMode, avoid: avoidAreasOf(user) }) : null;
+    return checked?.plan ? checked : null;
   };
   const ask = async () => parseReply(weekChangeReply, await askAi(prompt, { userId: user.id, maxTokens: 3000, unavailable }));
 
   // Next week must carry the progression, so a reply without it gets one more try.
   let reply = await ask();
-  let adjusted = adjust(reply);
-  if (!adjusted) {
+  let checked = adjust(reply);
+  if (!checked) {
     console.warn("[nextWeek] AI sent no usable week; asking once more");
     reply = await ask();
-    adjusted = adjust(reply);
+    checked = adjust(reply);
   }
   // Still nothing: the move goes ahead with next week as it stands, and says so.
+  let adjusted = checked?.plan ?? null;
   let message = aiText(reply?.message, 700) || `Week ${next} is ready.`;
-  const swapNote = adjusted ? goEasySwapNote(changedDays(reply), adjusted.weeks?.[next - 1]?.days, avoidAreasOf(user)) : null;
+  const swapNote = checked ? goEasySwapNote(checked.swaps, avoidAreasOf(user)) : null;
   if (swapNote) message = `${message} ${swapNote}`;
   if (!adjusted) {
     adjusted = validateAndSanitizePlan(planOnly, equipment, { avoid: avoidAreasOf(user), fromWeek: next });
@@ -543,7 +548,7 @@ async function chatWithPlan(user, planId, userMessage, today = dateKey()) {
     const checked = checkedWeekChange(planOnly, plan.weekNumber, days, equipment, { safeMode: safeModeOf(user), avoid: avoidAreasOf(user) });
     if (checked.plan) {
       changedPlan = checked.plan;
-      const note = goEasySwapNote(days, changedPlan.weeks?.[(plan.weekNumber || 1) - 1]?.days, avoidAreasOf(user));
+      const note = goEasySwapNote(checked.swaps, avoidAreasOf(user));
       if (note) message = `${message} ${note}`;
     } else if (checked.problems.includes("too big a jump")) {
       console.warn("[planChat] Safe mode: AI change added too much at once; keeping the current plan");

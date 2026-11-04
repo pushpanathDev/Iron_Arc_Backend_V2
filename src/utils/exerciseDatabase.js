@@ -153,24 +153,17 @@ function ruledOutIn(days, avoid) {
  * When the validator swapped exercises the AI chose that "go easy on" rules
  * out, the line that says so ("To go easy on your knees, this uses Goblet
  * Squat instead of Barbell Back Squat."), so the coach's message never names
- * an exercise the suggestion doesn't have. `aiDays` are the AI's short-key
- * days, `days` the checked week. Null when nothing was swapped.
+ * an exercise the suggestion doesn't have. `swaps` are the validator's
+ * ({ from, to }); ones made for equipment are left out. Null when none is left.
  */
-function goEasySwapNote(aiDays, days, avoid) {
-  if (avoid.length === 0 || !Array.isArray(aiDays)) return null;
+function goEasySwapNote(swaps, avoid) {
   const pairs = new Map();
   const areas = new Set();
-  for (const aiDay of aiDays) {
-    const asked = (aiDay?.x ?? []).map((x) => x?.id);
-    const out = asked.filter((id) => stressedAreas(id, avoid).length > 0);
-    if (out.length === 0) continue;
-    const day = (days ?? []).find((d) => d.day === aiDay.d);
-    const added = (day?.exercises ?? []).map((ex) => ex.exerciseId).filter((id) => !asked.includes(id));
-    out.forEach((id, i) => {
-      if (!added[i]) return;
-      pairs.set(`${added[i]}<${id}`, `${EXERCISE_DB[added[i]].name} instead of ${EXERCISE_DB[id].name}`);
-      stressedAreas(id, avoid).forEach((area) => areas.add(AREA_NAMES[area]));
-    });
+  for (const { from, to } of swaps ?? []) {
+    const stressed = stressedAreas(from, avoid);
+    if (stressed.length === 0) continue;
+    pairs.set(`${to}<${from}`, `${EXERCISE_DB[to].name} instead of ${EXERCISE_DB[from].name}`);
+    stressed.forEach((area) => areas.add(AREA_NAMES[area]));
   }
   if (pairs.size === 0) return null;
   const list = (items) => (items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}` : items[0]);
