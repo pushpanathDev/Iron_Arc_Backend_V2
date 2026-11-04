@@ -296,14 +296,11 @@ function evaluateDefinitions(definitions, metrics) {
 }
 
 module.exports = {
-  MUSCLE_GROUP_MAP,
   METRIC_SOURCE,
-  toDateKey,
   computeStreaks,
   computeWeekStreaks,
   computeWeekly,
   countPrExercises,
-  isPR,
   muscleGroupsCovered,
   computeComeback,
   computeWorkoutMetrics,

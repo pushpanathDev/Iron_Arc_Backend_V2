@@ -63,4 +63,4 @@ async function recordAiUsage(userId, { tokensIn = 0, tokensOut = 0 } = {}, now =
   }
 }
 
-module.exports = { checkAiBudget, recordAiUsage, utcDay, limits };
+module.exports = { checkAiBudget, recordAiUsage, limits };

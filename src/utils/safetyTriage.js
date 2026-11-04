@@ -90,4 +90,4 @@ const leaksInstructions = (text) => INSTRUCTIONS.test(String(text ?? ""));
 /** What the coach says instead. */
 const LEAK_REPLY = "I can't share how I'm set up, but I'm happy to help with your training. What would you like to work on?";
 
-module.exports = { dangerSign, outOfScope, leaksInstructions, NUTRITION_REPLY, LEAK_REPLY, SAFETY_REPLIES: REPLIES };
+module.exports = { dangerSign, outOfScope, leaksInstructions, NUTRITION_REPLY, LEAK_REPLY };

@@ -49,7 +49,6 @@ function newHealthCheck(answers, now = new Date()) {
 }
 
 module.exports = {
-  HEALTH_CHECK_VERSION,
   HEALTH_CHECK_QUESTIONS,
   ADULT_AGE,
   healthCheckOf,
