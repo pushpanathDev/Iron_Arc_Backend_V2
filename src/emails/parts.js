@@ -12,7 +12,7 @@ const C = {
   text: "#E1E2E7",
   soft: "#BCCAC0",
   muted: "#8A939C",
-  accent: "#22D47F",
+  accent: "#3CCB7F",
   warn: "#FFB957",
 };
 /** The Pro badge's holographic shimmer (the app's proFinish). */

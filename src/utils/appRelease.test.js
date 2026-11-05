@@ -1,7 +1,7 @@
 // The in-app update prompt's release info: from the latest GitHub release, or set by hand.
 const { test, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
-const { compareVersions, latestRelease, notesFromBody, clearReleaseCache } = require("./appRelease");
+const { compareVersions, latestRelease, sectionsFromBody, clearReleaseCache } = require("./appRelease");
 
 const NOW = Date.parse("2026-11-10T12:00:00Z");
 const gh = (fields = {}) => ({
@@ -9,7 +9,7 @@ const gh = (fields = {}) => ({
   draft: false,
   prerelease: false,
   published_at: "2026-11-10T00:00:00Z",
-  body: "## What's new\n\n- **Iron Arc Pro.** The coach chat and unlimited plans.\n- **Bigger exercise list:** 95 exercises\n- Plain point without bold\n\nSee the changelog.",
+  body: "## What's new\n\n- **Iron Arc Pro.** The coach chat and unlimited plans.\n- **Bigger exercise list:** 95 exercises\n- Plain point without bold\n\n#### Under the hood\n\n- **Faster prompts.** Internal\n\n#### Coming next\n\n- **Speak your sets.** Say them, they're logged.\n\nSee the changelog.",
   assets: [
     { name: "notes.txt", browser_download_url: "https://x/notes.txt" },
     { name: "Iron-Arc-2.1.0.apk", browser_download_url: "https://github.com/me/r/releases/download/v2.1.0/Iron-Arc-2.1.0.apk" },
@@ -34,6 +34,8 @@ test("from the latest GitHub release: its tag, its .apk (any name), 3 days' grac
   assert.equal(release.requiredFrom, "2026-11-13T00:00:00.000Z");
   assert.equal(release.minVersion, null);
   assert.deepEqual(release.notes, ["Iron Arc Pro", "Bigger exercise list", "Plain point without bold"]);
+  assert.deepEqual(release.whatsNew[0], { title: "Iron Arc Pro", text: "The coach chat and unlimited plans." });
+  assert.deepEqual(release.comingNext, [{ title: "Speak your sets", text: "Say them, they're logged." }]);
 });
 
 test("the server's settings adjust it: grace days and a minimum version", async () => {
@@ -140,8 +142,20 @@ test("manual control with the APP_* settings takes over from GitHub", async () =
   assert.equal((await latestRelease({ APP_LATEST_VERSION: "2.1.1", APP_DOWNLOAD_URL: "https://x/a.apk" }, { fetchRelease })).requiredFrom, null, "no date: never forced by date");
 });
 
-test("notes: bullets only, the bold part when there is one, markdown and links removed, long ones cut", () => {
-  assert.deepEqual(notesFromBody("# Title\n* **Move a session.** History\n- [Docs](https://x) and `code`\ntext"), ["Move a session", "Docs and code"]);
-  assert.equal(notesFromBody("- " + "x".repeat(200))[0].length, 118);
-  assert.deepEqual(notesFromBody(null), []);
+test("What's new: bullets only, the bold part as the title and the rest as its line, markdown and links removed, long ones cut", () => {
+  assert.deepEqual(sectionsFromBody("# Title\n* **Move a session.** History\n- [Docs](https://x) and `code`\ntext").whatsNew, [
+    { title: "Move a session", text: "History" },
+    { title: "Docs and code", text: "" },
+  ]);
+  assert.deepEqual(sectionsFromBody("- **95 exercises for AI plans**, up from 32: flies").whatsNew[0], { title: "95 exercises for AI plans", text: "Up from 32: flies" });
+  assert.equal(sectionsFromBody("- " + "x".repeat(200)).whatsNew[0].title.length, 118);
+  assert.equal(sectionsFromBody("- **A.** " + "y".repeat(300)).whatsNew[0].text.length, 218);
+  assert.deepEqual(sectionsFromBody(null), { whatsNew: [], comingNext: [] });
+});
+
+test("sections: Coming next (or Up next) is its own list, Under the hood is left out, later headings are What's new again", () => {
+  const body = "#### Highlights\n- **One.** a\n#### Under the hood\n- **Hidden.** b\n#### Up next\n- **Soon.** c\n#### Also new\n- **Two.** d";
+  const { whatsNew, comingNext } = sectionsFromBody(body);
+  assert.deepEqual(whatsNew.map((item) => item.title), ["One", "Two"]);
+  assert.deepEqual(comingNext.map((item) => item.title), ["Soon"]);
 });

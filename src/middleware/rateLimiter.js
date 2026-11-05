@@ -52,4 +52,15 @@ const planChatLimiter = rateLimit({
   keyGenerator: (req) => req.user?.uid || req.ip,
 });
 
-module.exports = { planGenerationLimiter, planChatLimiter, userLimiter, adminLimiter };
+// Voice Limiter
+// Speak your sets: a clip per set or note, so generous, but it still caps Groq's audio use per user.
+const voiceLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour window
+  max: parseInt(process.env.MAX_VOICE_PER_HOUR) || 150,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Voice limit reached for this hour. Type the set for now." },
+  keyGenerator: (req) => req.user?.uid || req.ip,
+});
+
+module.exports = { planGenerationLimiter, planChatLimiter, voiceLimiter, userLimiter, adminLimiter };
