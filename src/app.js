@@ -19,6 +19,7 @@ const bodyWeightRoutes = require("./routes/bodyWeightRoutes");
 const customExerciseRoutes = require("./routes/customExerciseRoutes");
 const achievementRoutes = require("./routes/achievementRoutes");
 const billingRoutes = require("./routes/billingRoutes");
+const voiceRoutes = require("./routes/voiceRoutes");
 const appRoutes = require("./routes/appRoutes");
 
 const app = express();
@@ -68,6 +69,7 @@ app.use("/api/exercises", customExerciseRoutes);
 app.use("/api/achievements", achievementRoutes);
 app.use("/api/plans", planRoutes);
 app.use("/api/billing", billingRoutes);
+app.use("/api/voice", voiceRoutes);
 app.use("/api/admin", adminLimiter, adminRoutes);
 
 // 404 Catch-All

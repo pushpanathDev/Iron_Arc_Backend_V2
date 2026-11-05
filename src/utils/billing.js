@@ -135,13 +135,16 @@ const PLAN_LIST = PLAN_IDS.map((id) => ({ id, months: PLANS[id].months, amount: 
 
 /**
  * Why this AI feature is closed to the user (an HttpError with a code the app
- * acts on), or null. `feature`: chat (Pro), newPlan (Pro or the free plan),
- * planWeeks (next week and swaps: anyone).
+ * acts on), or null. `feature`: chat (Pro), voice (Speak your sets: Pro),
+ * newPlan (Pro or the free plan), planWeeks (next week and swaps: anyone).
  */
 function proAccessError(feature, { pro, freePlan }) {
   if (!proGateOn() || pro.active || feature === "planWeeks") return null;
   if (feature === "chat") {
     return new HttpError(403, "The AI coach chat is part of Iron Arc Pro.", "PRO_REQUIRED");
+  }
+  if (feature === "voice") {
+    return new HttpError(403, "Speak your sets is part of Iron Arc Pro.", "PRO_REQUIRED");
   }
   if (feature === "newPlan" && freePlan.used >= freePlan.limit) {
     return planLimitError();

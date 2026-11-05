@@ -4,7 +4,9 @@
  * Normally it comes from GitHub: the latest release of APP_RELEASES_REPO
  * (default pushpanathDev/Iron_Arc-app). Its tag ("v2.2.0") is the version,
  * its attached .apk (any name) the download, its publish date starts the
- * grace period, and the bold points of its text are "What's new". So
+ * grace period, and the points of its text are "What's new" (each a bold
+ * title and a line about it), except those under a "Coming next" heading,
+ * which the app shows as what's on the way, and "Under the hood" ones. So
  * publishing a release there is the whole update; nothing to change here.
  *
  * Settings on the server (Render's environment) adjust it:
@@ -32,6 +34,9 @@ const RETRY_MS = 60 * 1000;
 const MAX_RETRY_MS = 60 * 60 * 1000;
 const VERSION = /^\d+\.\d+\.\d+$/;
 const MAX_NOTES = 8;
+const MAX_COMING = 5;
+const MAX_TITLE = 120;
+const MAX_TEXT = 220;
 
 /** -1, 0 or 1, comparing "2.10.0" and "2.9.1" by numbers. */
 function compareVersions(a, b) {
@@ -46,7 +51,7 @@ function compareVersions(a, b) {
 const graceDaysOf = (env) => (env.APP_UPDATE_GRACE_DAYS !== undefined && env.APP_UPDATE_GRACE_DAYS !== "" && Number.isFinite(Number(env.APP_UPDATE_GRACE_DAYS)) ? Number(env.APP_UPDATE_GRACE_DAYS) : DEFAULT_GRACE_DAYS);
 
 /** The release as the app gets it, from its parts (null when they don't make a usable one). */
-function releaseFrom({ latest, downloadUrl, releasedAt, notes }, env) {
+function releaseFrom({ latest, downloadUrl, releasedAt, whatsNew, comingNext }, env) {
   if (!latest || !VERSION.test(latest) || !downloadUrl?.startsWith("https://")) return null;
   const released = releasedAt ? new Date(releasedAt) : null;
   const requiredFrom = released && !Number.isNaN(released.getTime()) ? new Date(released.getTime() + graceDaysOf(env) * DAY_MS) : null;
@@ -60,7 +65,11 @@ function releaseFrom({ latest, downloadUrl, releasedAt, notes }, env) {
     requiredFrom: requiredFrom ? requiredFrom.toISOString() : null,
     // Apps older than this must update now (null: none).
     minVersion: minVersion && VERSION.test(minVersion) ? minVersion : null,
-    notes: notes.slice(0, MAX_NOTES),
+    // Older apps read these: the titles of What's new.
+    notes: whatsNew.slice(0, MAX_NOTES).map((item) => item.title),
+    // { title, text } each ("text" may be empty).
+    whatsNew: whatsNew.slice(0, MAX_NOTES),
+    comingNext: comingNext.slice(0, MAX_COMING),
   };
 }
 
@@ -71,28 +80,44 @@ function releaseFromSettings(env) {
       latest: env.APP_LATEST_VERSION?.trim(),
       downloadUrl: env.APP_DOWNLOAD_URL?.trim(),
       releasedAt: env.APP_RELEASED_AT,
-      notes: (env.APP_RELEASE_NOTES ?? "").split("|").map((line) => line.trim()).filter(Boolean),
+      whatsNew: (env.APP_RELEASE_NOTES ?? "").split("|").map((line) => line.trim()).filter(Boolean).map((title) => ({ title, text: "" })),
+      comingNext: [],
     },
     env,
   );
 }
 
+const plain = (text) => text.replace(/\*\*|__|`/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").trim();
+const cut = (text, max) => (text.length > max ? `${text.slice(0, max - 3).trimEnd()}…` : text);
+
+/** A bullet as { title, text }: "**Move a session.** History → …" → "Move a session" and "History → …". */
+function itemFrom(bullet) {
+  const bold = bullet.match(/^\*\*(.+?)\*\*(.*)$/);
+  const title = plain(bold ? bold[1] : bullet).replace(/[.:]\s*$/, "");
+  // What follows the bold part, without the joining punctuation (", up from 32" → "Up from 32").
+  const rest = bold ? plain(bold[2]).replace(/^[\s,.;:—–-]+/, "") : "";
+  return { title: cut(title, MAX_TITLE), text: cut(rest.charAt(0).toUpperCase() + rest.slice(1), MAX_TEXT) };
+}
+
 /**
- * "What's new" from a release's text: its bullet points, each cut to the bold
- * part when it has one ("- **Move a session.** History → …" → "Move a
- * session"). Headings and other lines are left out; markdown is removed.
+ * A release's text as the app's lists: every bullet point is What's new, except
+ * those under a "Coming next" heading (what's on the way) and "Under the hood"
+ * ones (too technical for the app). Other lines are left out.
  */
-function notesFromBody(body) {
-  return String(body ?? "")
-    .split(/\r?\n/)
-    .map((line) => line.match(/^\s*[-*]\s+(.*)$/)?.[1])
-    .filter(Boolean)
-    .map((item) => {
-      const bold = item.match(/^\*\*(.+?)\*\*/)?.[1];
-      const text = (bold ?? item).replace(/\*\*|__|`/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/[.:]\s*$/, "").trim();
-      return text.length > 120 ? `${text.slice(0, 117).trimEnd()}…` : text;
-    })
-    .filter(Boolean);
+function sectionsFromBody(body) {
+  const sections = { whatsNew: [], comingNext: [] };
+  let into = sections.whatsNew;
+  for (const line of String(body ?? "").split(/\r?\n/)) {
+    const heading = line.match(/^\s*#{1,6}\s+(.*)$/)?.[1];
+    if (heading !== undefined) {
+      into = /coming next|up next/i.test(heading) ? sections.comingNext : /under the hood/i.test(heading) ? null : sections.whatsNew;
+      continue;
+    }
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/)?.[1];
+    const item = bullet && into ? itemFrom(bullet) : null;
+    if (item?.title) into.push(item);
+  }
+  return sections;
 }
 
 /** A GitHub release (the API's JSON) as the parts of the app's release, or null. */
@@ -103,7 +128,7 @@ function partsFromGitHub(gh) {
     latest: String(gh.tag_name ?? "").replace(/^v/i, ""),
     downloadUrl: apk?.browser_download_url,
     releasedAt: gh.published_at ?? null,
-    notes: notesFromBody(gh.body),
+    ...sectionsFromBody(gh.body),
   };
 }
 
@@ -162,4 +187,4 @@ function clearReleaseCache() {
   cached = { at: 0, parts: null, repo: null };
 }
 
-module.exports = { compareVersions, latestRelease, notesFromBody, clearReleaseCache };
+module.exports = { compareVersions, latestRelease, sectionsFromBody, clearReleaseCache };
